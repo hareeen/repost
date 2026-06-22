@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          gleam-version: "1.15.4"
+          rebar3-version: "3"
+
+      - name: Cache Gleam build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/packages
+            build/erlang
+          key: ${{ runner.os }}-gleam-${{ hashFiles('manifest.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gleam-
+
+      - run: gleam deps download
+      - run: gleam format --check src test
+      - run: gleam build
+      - run: gleam test
+
+  shipment:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          gleam-version: "1.15.4"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam export erlang-shipment
+      - uses: actions/upload-artifact@v4
+        with:
+          name: erlang-shipment
+          path: build/erlang-shipment
+          if-no-files-found: error
+          retention-days: 14

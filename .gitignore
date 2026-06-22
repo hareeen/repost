@@ -1,0 +1,18 @@
+# Gleam / Erlang build output
+build/
+*.beam
+*.ez
+erl_crash.dump
+.rebar3/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment overrides
+.env
+.env.local
