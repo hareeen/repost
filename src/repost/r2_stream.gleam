@@ -50,6 +50,18 @@ fn ffi_finish(
 @external(erlang, "repost_stream_ffi", "close")
 fn ffi_close(conn: Conn) -> Nil
 
+@external(erlang, "repost_stream_ffi", "request_body")
+fn ffi_request_body(
+  scheme: http.Scheme,
+  host: BitArray,
+  port: Int,
+  method: BitArray,
+  path: BitArray,
+  headers: List(#(BitArray, BitArray)),
+  body: BitArray,
+  timeout_ms: Int,
+) -> Result(#(Int, List(#(BitArray, BitArray)), BitArray), Dynamic)
+
 pub fn start(
   scheme: http.Scheme,
   host: String,
@@ -86,6 +98,34 @@ pub fn finish(conn: Conn, timeout_ms: Int) -> Result(Response, FinishError) {
 
 pub fn close(conn: Conn) -> Nil {
   ffi_close(conn)
+}
+
+pub fn request_body(
+  scheme: http.Scheme,
+  host: String,
+  port: Int,
+  method: String,
+  path: String,
+  headers: List(#(String, String)),
+  body: BitArray,
+  timeout_ms: Int,
+) -> Result(Response, FinishError) {
+  case
+    ffi_request_body(
+      scheme,
+      bit_array.from_string(host),
+      port,
+      bit_array.from_string(method),
+      bit_array.from_string(path),
+      encode_headers(headers),
+      body,
+      timeout_ms,
+    )
+  {
+    Ok(#(status, headers, body)) ->
+      Ok(Response(status:, headers: decode_headers(headers), body:))
+    Error(d) -> Error(finish_error_from(d))
+  }
 }
 
 fn encode_headers(pairs: List(#(String, String))) -> List(#(BitArray, BitArray)) {

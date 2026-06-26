@@ -16,16 +16,11 @@ import repost/errors.{type ErrorResponse}
 import repost/multipart_stream as ms
 import repost/pipeline
 import repost/policy
-import repost/r2_stream
 import repost/streaming/mist_response
 import repost/streaming/r2_put
 import repost/time
 
 const text_fields_cap: Int = 1_048_576
-
-const r2_finish_timeout_ms: Int = 60_000
-
-const r2_send_chunk_size: Int = 512
 
 pub type Clock =
   fn() -> Int
@@ -59,6 +54,7 @@ pub fn run(
       current_field: NoCurrentField,
       r2: NoR2,
       file_bytes_seen: 0,
+      file_chunks: [],
       policy_doc: NoPolicy,
     ),
   )
@@ -72,7 +68,7 @@ type CurrentField {
 
 type R2State {
   NoR2
-  R2Open(conn: r2_stream.Conn, key: String)
+  R2Buffered(key: String, content_type: Result(String, Nil))
 }
 
 type PolicySlot {
@@ -90,6 +86,7 @@ type ProcessState {
     current_field: CurrentField,
     r2: R2State,
     file_bytes_seen: Int,
+    file_chunks: List(BitArray),
     policy_doc: PolicySlot,
   )
 }
@@ -128,8 +125,7 @@ fn handle_part_start(
       // Spec §6.2: file must be the last field. Close R2 first so the
       // socket isn't leaked.
       case state.r2 {
-        R2Open(..) -> {
-          close_r2_silently(state)
+        R2Buffered(..) -> {
           mist_response.xml_error(
             state.decision,
             errors.invalid_request(
@@ -220,10 +216,7 @@ fn begin_file_part(
   field_name: String,
 ) -> http_response.Response(mist.ResponseData) {
   case state.r2 {
-    R2Open(..) -> {
-      // Close the first part's R2 socket before erroring on the second to
-      // avoid leaking it until BEAM GC.
-      close_r2_silently(state)
+    R2Buffered(..) -> {
       mist_response.xml_error(
         state.decision,
         errors.invalid_request("more than one `file` field"),
@@ -233,27 +226,15 @@ fn begin_file_part(
       case validate_pre_file(state) {
         Error(err) -> mist_response.xml_error(state.decision, err)
         Ok(#(policy_doc, key, content_type)) ->
-          case
-            r2_put.open(
-              state.deps.endpoint,
-              state.deps.config,
-              key,
-              content_type,
-              state.deps.clock(),
-            )
-          {
-            Error(err) -> mist_response.xml_error(state.decision, err)
-            Ok(opened) ->
-              loop(
-                parser,
-                ProcessState(
-                  ..state,
-                  current_field: StreamingFile(name: field_name),
-                  r2: R2Open(conn: opened.conn, key: opened.key),
-                  policy_doc: HasPolicy(policy_doc),
-                ),
-              )
-          }
+          loop(
+            parser,
+            ProcessState(
+              ..state,
+              current_field: StreamingFile(name: field_name),
+              r2: R2Buffered(key:, content_type:),
+              policy_doc: HasPolicy(policy_doc),
+            ),
+          )
       }
   }
 }
@@ -269,58 +250,23 @@ fn stream_to_r2(
         state.decision,
         errors.shim_error("stream-to-r2 without conn"),
       )
-    R2Open(conn:, ..) -> {
+    R2Buffered(..) -> {
       let new_total = state.file_bytes_seen + bit_array.byte_size(bytes)
       // Spec §10.2.3: abort the moment the cumulative byte count exceeds
-      // the bound; closing R2 prevents the partial upload from committing.
+      // the bound.
       let upper = effective_upper_bound(state)
       case new_total > upper {
-        True -> {
-          close_r2_silently(state)
+        True ->
           mist_response.xml_error(state.decision, errors.entity_too_large())
-        }
         False ->
-          case send_r2_chunk(conn, bytes) {
-            Error(_) -> {
-              close_r2_silently(state)
-              mist_response.xml_error(
-                state.decision,
-                errors.internal_error("R2 connection lost mid-stream"),
-              )
-            }
-            Ok(_) ->
-              loop(parser, ProcessState(..state, file_bytes_seen: new_total))
-          }
+          loop(
+            parser,
+            ProcessState(..state, file_bytes_seen: new_total, file_chunks: [
+              bytes,
+              ..state.file_chunks
+            ]),
+          )
       }
-    }
-  }
-}
-
-fn send_r2_chunk(
-  conn: r2_stream.Conn,
-  bytes: BitArray,
-) -> Result(Nil, r2_stream.SendError) {
-  send_r2_chunk_loop(conn, bytes, bit_array.byte_size(bytes))
-}
-
-fn send_r2_chunk_loop(
-  conn: r2_stream.Conn,
-  bytes: BitArray,
-  size: Int,
-) -> Result(Nil, r2_stream.SendError) {
-  case size <= r2_send_chunk_size {
-    True -> r2_stream.send_chunk(conn, bytes)
-    False -> {
-      use head <- result.try(
-        bit_array.slice(bytes, 0, r2_send_chunk_size)
-        |> result.replace_error(r2_stream.SendErrorOther("slice failed")),
-      )
-      use tail <- result.try(
-        bit_array.slice(bytes, r2_send_chunk_size, size - r2_send_chunk_size)
-        |> result.replace_error(r2_stream.SendErrorOther("slice failed")),
-      )
-      use _ <- result.try(r2_stream.send_chunk(conn, head))
-      send_r2_chunk_loop(conn, tail, bit_array.byte_size(tail))
     }
   }
 }
@@ -332,29 +278,31 @@ fn finalize(state: ProcessState) -> http_response.Response(mist.ResponseData) {
         state.decision,
         errors.invalid_request("missing `file` field"),
       )
-    R2Open(conn:, ..) ->
+    R2Buffered(key:, content_type:) ->
       case check_lower_bound(state) {
-        Error(err) -> {
-          close_r2_silently(state)
-          mist_response.xml_error(state.decision, err)
-        }
-        Ok(_) -> read_r2_response(state, conn)
+        Error(err) -> mist_response.xml_error(state.decision, err)
+        Ok(_) -> put_buffered_to_r2(state, key, content_type)
       }
   }
 }
 
-fn read_r2_response(
+fn put_buffered_to_r2(
   state: ProcessState,
-  conn: r2_stream.Conn,
+  key: String,
+  content_type: Result(String, Nil),
 ) -> http_response.Response(mist.ResponseData) {
-  let result = r2_stream.finish(conn, r2_finish_timeout_ms)
-  r2_stream.close(conn)
-  case result {
-    Error(_) ->
-      mist_response.xml_error(
-        state.decision,
-        errors.internal_error("R2 finish failed"),
-      )
+  let body = concat_chunks(list.reverse(state.file_chunks), <<>>)
+  case
+    r2_put.put_buffered(
+      state.deps.endpoint,
+      state.deps.config,
+      key,
+      content_type,
+      state.deps.clock(),
+      body,
+    )
+  {
+    Error(err) -> mist_response.xml_error(state.decision, err)
     Ok(resp) ->
       case resp.status >= 200 && resp.status < 300 {
         True ->
@@ -373,10 +321,10 @@ fn read_r2_response(
   }
 }
 
-fn close_r2_silently(state: ProcessState) -> Nil {
-  case state.r2 {
-    R2Open(conn:, ..) -> r2_stream.close(conn)
-    NoR2 -> Nil
+fn concat_chunks(chunks: List(BitArray), acc: BitArray) -> BitArray {
+  case chunks {
+    [] -> acc
+    [chunk, ..rest] -> concat_chunks(rest, bit_array.append(acc, chunk))
   }
 }
 
@@ -473,7 +421,6 @@ fn handle_parse_error(
   state: ProcessState,
   err: ms.ParseError,
 ) -> http_response.Response(mist.ResponseData) {
-  close_r2_silently(state)
   case err {
     ms.HeaderLimitExceeded ->
       mist_response.xml_error(

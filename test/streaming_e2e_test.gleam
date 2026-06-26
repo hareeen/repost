@@ -352,7 +352,11 @@ pub fn happy_path_chunked_request_chunked_to_r2_test() {
   assert captured.body == payload
   let assert Ok(content_sha) =
     list.key_find(captured.headers, "x-amz-content-sha256")
-  assert content_sha == "UNSIGNED-PAYLOAD"
+  assert content_sha == sigv4.sha256_hex(payload)
+  let assert Ok(content_length) =
+    list.key_find(captured.headers, "content-length")
+  assert content_length == int.to_string(bit_array.byte_size(payload))
+  assert list.key_find(captured.headers, "transfer-encoding") == Error(Nil)
   let assert Ok(content_type) = list.key_find(captured.headers, "content-type")
   assert content_type == "image/png"
   assert header_count(captured.headers, "host") == 1
