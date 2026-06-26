@@ -25,6 +25,8 @@ const text_fields_cap: Int = 1_048_576
 
 const r2_finish_timeout_ms: Int = 60_000
 
+const r2_send_chunk_size: Int = 512
+
 pub type Clock =
   fn() -> Int
 
@@ -278,7 +280,7 @@ fn stream_to_r2(
           mist_response.xml_error(state.decision, errors.entity_too_large())
         }
         False ->
-          case r2_stream.send_chunk(conn, bytes) {
+          case send_r2_chunk(conn, bytes) {
             Error(_) -> {
               close_r2_silently(state)
               mist_response.xml_error(
@@ -290,6 +292,35 @@ fn stream_to_r2(
               loop(parser, ProcessState(..state, file_bytes_seen: new_total))
           }
       }
+    }
+  }
+}
+
+fn send_r2_chunk(
+  conn: r2_stream.Conn,
+  bytes: BitArray,
+) -> Result(Nil, r2_stream.SendError) {
+  send_r2_chunk_loop(conn, bytes, bit_array.byte_size(bytes))
+}
+
+fn send_r2_chunk_loop(
+  conn: r2_stream.Conn,
+  bytes: BitArray,
+  size: Int,
+) -> Result(Nil, r2_stream.SendError) {
+  case size <= r2_send_chunk_size {
+    True -> r2_stream.send_chunk(conn, bytes)
+    False -> {
+      use head <- result.try(
+        bit_array.slice(bytes, 0, r2_send_chunk_size)
+        |> result.replace_error(r2_stream.SendErrorOther("slice failed")),
+      )
+      use tail <- result.try(
+        bit_array.slice(bytes, r2_send_chunk_size, size - r2_send_chunk_size)
+        |> result.replace_error(r2_stream.SendErrorOther("slice failed")),
+      )
+      use _ <- result.try(r2_stream.send_chunk(conn, head))
+      send_r2_chunk_loop(conn, tail, bit_array.byte_size(tail))
     }
   }
 }
