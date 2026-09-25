@@ -51,7 +51,10 @@ pub fn error_headers_only_when_allowed_test() {
   assert header(h, "access-control-allow-origin") == Ok("https://x")
 }
 
-fn header(headers: List(#(String, String)), name: String) -> Result(String, Nil) {
+fn header(
+  headers: List(#(String, String)),
+  name: String,
+) -> Result(String, Nil) {
   case headers {
     [] -> Error(Nil)
     [#(k, v), ..rest] ->
