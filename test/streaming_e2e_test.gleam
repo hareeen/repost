@@ -278,10 +278,12 @@ pub fn happy_path_chunked_request_chunked_to_r2_test() {
   let assert Ok(content_length) =
     list.key_find(captured.headers, "content-length")
   assert content_length == int.to_string(bit_array.byte_size(payload))
+  assert header_count(captured.headers, "content-length") == 1
   assert list.key_find(captured.headers, "transfer-encoding") == Error(Nil)
   let assert Ok(content_type) = list.key_find(captured.headers, "content-type")
   assert content_type == "image/png"
   assert header_count(captured.headers, "host") == 1
+  assert header_count(captured.headers, "content-type") == 1
 }
 
 pub fn aborts_when_content_length_range_upper_bound_exceeded_mid_stream_test() {

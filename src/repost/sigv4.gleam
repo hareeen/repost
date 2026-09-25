@@ -1,13 +1,14 @@
-//// AWS SigV4: POST-policy verification (browser → shim) and PUT signing
+//// AWS SigV4: POST-policy verification (browser → shim) and request signing
 //// (shim → R2). See AWS docs `sigv4-HTTPPOSTConstructPolicy.html` and
 //// `general/latest/gr/sigv4_signing.html` for the reference algorithms.
 
 import gleam/bit_array
 import gleam/crypto
-import gleam/int
+import gleam/http.{type Method}
 import gleam/list
-import gleam/order.{type Order}
+import gleam/order.{type Order, Eq}
 import gleam/string
+import repost/sigv4/uri
 
 pub type Credential {
   Credential(access_key: String, date: String, region: String, service: String)
@@ -85,68 +86,80 @@ pub fn verify_post_signature(
   }
 }
 
-pub type PutSignInput {
-  PutSignInput(
+pub type SigningCredentials {
+  SigningCredentials(
     access_key: String,
     secret: String,
     region: String,
     service: String,
-    /// Host header value; include the port unless it's the scheme default.
-    host: String,
-    /// Path starting with `/{bucket}/{key}`, segments already URI-encoded.
-    canonical_uri: String,
-    /// Lowercase hex SHA-256 of the request body, OR the literal string
-    /// `UNSIGNED-PAYLOAD` for streaming uploads.
-    payload_sha256_hex: String,
-    /// Timestamp in `YYYYMMDDTHHMMSSZ` format.
-    amz_date: String,
-    content_type: Result(String, Nil),
-    content_length: Int,
   )
 }
 
-pub fn sign_put(input: PutSignInput) -> List(#(String, String)) {
-  let date = string.slice(input.amz_date, at_index: 0, length: 8)
-  let credential_scope =
-    date <> "/" <> input.region <> "/" <> input.service <> "/aws4_request"
+pub fn canonical_query(query: List(#(String, String))) -> String {
+  query
+  |> list.map(fn(pair) {
+    #(uri.encode_segment(pair.0), uri.encode_segment(pair.1))
+  })
+  |> list.sort(by: fn(left, right) {
+    case string.compare(left.0, right.0) {
+      Eq -> string.compare(left.1, right.1)
+      other -> other
+    }
+  })
+  |> list.map(fn(pair) { pair.0 <> "=" <> pair.1 })
+  |> string.join("&")
+}
 
-  let base_headers = [
-    #("host", input.host),
-    #("x-amz-content-sha256", input.payload_sha256_hex),
-    #("x-amz-date", input.amz_date),
-  ]
-  let with_content_type = case input.content_type {
-    Ok(ct) -> [#("content-type", ct), ..base_headers]
-    Error(_) -> base_headers
-  }
-  let signed = list.sort(with_content_type, by: header_compare)
+pub fn sign(
+  method: Method,
+  canonical_uri: String,
+  query: List(#(String, String)),
+  headers: List(#(String, String)),
+  payload_sha256_hex: String,
+  amz_date: String,
+  creds: SigningCredentials,
+) -> List(#(String, String)) {
+  let date = string.slice(amz_date, at_index: 0, length: 8)
+  let credential_scope =
+    date <> "/" <> creds.region <> "/" <> creds.service <> "/aws4_request"
+
+  let signed =
+    [
+      #("x-amz-content-sha256", payload_sha256_hex),
+      #("x-amz-date", amz_date),
+      ..headers
+    ]
+    |> list.sort(by: header_compare)
   let signed_headers_str = signed_headers_string(signed)
   let canonical_headers_str = canonical_headers_string(signed)
 
   let canonical_request =
-    "PUT\n"
-    <> input.canonical_uri
-    <> "\n\n"
+    http.method_to_string(method)
+    <> "\n"
+    <> canonical_uri
+    <> "\n"
+    <> canonical_query(query)
+    <> "\n"
     <> canonical_headers_str
     <> "\n"
     <> signed_headers_str
     <> "\n"
-    <> input.payload_sha256_hex
+    <> payload_sha256_hex
 
   let string_to_sign =
     "AWS4-HMAC-SHA256\n"
-    <> input.amz_date
+    <> amz_date
     <> "\n"
     <> credential_scope
     <> "\n"
     <> sha256_hex(bit_array.from_string(canonical_request))
 
-  let key = signing_key(input.secret, date, input.region, input.service)
+  let key = signing_key(creds.secret, date, creds.region, creds.service)
   let signature = hex(hmac(bit_array.from_string(string_to_sign), key))
 
   let authorization =
     "AWS4-HMAC-SHA256 Credential="
-    <> input.access_key
+    <> creds.access_key
     <> "/"
     <> credential_scope
     <> ",SignedHeaders="
@@ -154,12 +167,7 @@ pub fn sign_put(input: PutSignInput) -> List(#(String, String)) {
     <> ",Signature="
     <> signature
 
-  let outgoing =
-    list.append(signed, [
-      #("authorization", authorization),
-      #("content-length", int.to_string(input.content_length)),
-    ])
-  outgoing
+  list.append(signed, [#("authorization", authorization)])
 }
 
 fn header_compare(left: #(String, String), right: #(String, String)) -> Order {

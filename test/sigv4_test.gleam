@@ -2,6 +2,7 @@
 //// independent Python `hmac` implementation; see the constants below.
 
 import gleam/bit_array
+import gleam/http
 import repost/sigv4
 
 const aws_example_secret: String = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
@@ -113,23 +114,54 @@ pub fn sha256_known_value_test() {
     == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 }
 
+fn example_credentials() -> sigv4.SigningCredentials {
+  sigv4.SigningCredentials(
+    access_key: "AKIDEXAMPLE",
+    secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+    region: "us-east-1",
+    service: "s3",
+  )
+}
+
+fn example_headers() -> List(#(String, String)) {
+  [
+    #("host", "example-bucket.s3.amazonaws.com"),
+    #("content-type", "application/octet-stream"),
+  ]
+}
+
 pub fn sign_put_matches_python_reference_test() {
-  let input =
-    sigv4.PutSignInput(
-      access_key: "AKIDEXAMPLE",
-      secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-      region: "us-east-1",
-      service: "s3",
-      host: "example-bucket.s3.amazonaws.com",
-      canonical_uri: "/uploads/photo.png",
-      payload_sha256_hex: sigv4.sha256_hex(bit_array.from_string("hi")),
-      amz_date: "20240101T000000Z",
-      content_type: Ok("application/octet-stream"),
-      content_length: 2,
+  let out =
+    sigv4.sign(
+      http.Put,
+      "/uploads/photo.png",
+      [],
+      example_headers(),
+      sigv4.sha256_hex(bit_array.from_string("hi")),
+      "20240101T000000Z",
+      example_credentials(),
     )
-  let out = sigv4.sign_put(input)
   let expected =
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20240101/us-east-1/s3/aws4_request,SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,Signature=7ebab692f8c54b347d609ccf878aa832576e952c61e7ecff0583c5b35ff0cc94"
+  assert get_header(out, "authorization") == Ok(expected)
+}
+
+pub fn sign_query_matches_python_reference_test() {
+  let query = [#("uploadId", "a+b /"), #("uploads", ""), #("partNumber", "2")]
+  assert sigv4.canonical_query(query)
+    == "partNumber=2&uploadId=a%2Bb%20%2F&uploads="
+  let out =
+    sigv4.sign(
+      http.Put,
+      "/uploads/photo.png",
+      query,
+      example_headers(),
+      sigv4.sha256_hex(bit_array.from_string("hi")),
+      "20240101T000000Z",
+      example_credentials(),
+    )
+  let expected =
+    "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20240101/us-east-1/s3/aws4_request,SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,Signature=afb5a905634f3eae2360a8019e31c545525a9cd9fcb05290dc00064432115c57"
   assert get_header(out, "authorization") == Ok(expected)
 }
 
@@ -148,47 +180,46 @@ fn get_header(
 }
 
 pub fn sign_put_round_trip_test() {
-  let input =
-    sigv4.PutSignInput(
-      access_key: "AKIDEXAMPLE",
-      secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-      region: "us-east-1",
-      service: "s3",
-      host: "example-bucket.s3.amazonaws.com",
-      canonical_uri: "/uploads/photo.png",
-      payload_sha256_hex: sigv4.sha256_hex(bit_array.from_string("hi")),
-      amz_date: "20240101T000000Z",
-      content_type: Ok("application/octet-stream"),
-      content_length: 2,
+  let out_a =
+    sigv4.sign(
+      http.Put,
+      "/uploads/photo.png",
+      [],
+      example_headers(),
+      sigv4.sha256_hex(bit_array.from_string("hi")),
+      "20240101T000000Z",
+      example_credentials(),
     )
-  let out_a = sigv4.sign_put(input)
-  let out_b = sigv4.sign_put(input)
+  let out_b =
+    sigv4.sign(
+      http.Put,
+      "/uploads/photo.png",
+      [],
+      example_headers(),
+      sigv4.sha256_hex(bit_array.from_string("hi")),
+      "20240101T000000Z",
+      example_credentials(),
+    )
   assert out_a == out_b
-  // Ensure required headers are present.
   let names = list_keys(out_a)
   assert list_contains(names, "authorization")
   assert list_contains(names, "host")
   assert list_contains(names, "x-amz-content-sha256")
   assert list_contains(names, "x-amz-date")
-  assert list_contains(names, "content-length")
   assert list_contains(names, "content-type")
 }
 
 pub fn sign_put_omits_content_type_when_absent_test() {
-  let input =
-    sigv4.PutSignInput(
-      access_key: "AKIDEXAMPLE",
-      secret: "secret",
-      region: "us-east-1",
-      service: "s3",
-      host: "example.r2.cloudflarestorage.com",
-      canonical_uri: "/bucket/key",
-      payload_sha256_hex: sigv4.empty_sha256_hex,
-      amz_date: "20240101T000000Z",
-      content_type: Error(Nil),
-      content_length: 0,
+  let out =
+    sigv4.sign(
+      http.Put,
+      "/bucket/key",
+      [],
+      [#("host", "example.r2.cloudflarestorage.com")],
+      sigv4.empty_sha256_hex,
+      "20240101T000000Z",
+      example_credentials(),
     )
-  let out = sigv4.sign_put(input)
   let names = list_keys(out)
   assert !list_contains(names, "content-type")
   assert list_contains(names, "authorization")
