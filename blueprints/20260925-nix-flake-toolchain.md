@@ -1,6 +1,6 @@
 # Pin the toolchain and build the release image with a Nix flake
 
-Base: edb287263e5353249bf14518c731a043be4671af
+Base: 4d3be01a5376502a15277423f16f994a632d0212
 
 Objective: one flake defines the Gleam/Erlang toolchain for the devShell, the git hooks, CI and the release image, so local and CI formatting can no longer disagree, and the image comes from a hermetic Nix build instead of the Dockerfile.
 
@@ -61,6 +61,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - `docker.yml`: smoke test the amd64 image in Docker as today, then push the index to every metadata tag (`regctl image copy ocidir://…` or `copyTo` per arch plus index, whichever keeps the token out of logs). `ci.yml`'s shipment job uploads only `result/lib/repost`.
   - README: multi-arch pull, and building locally through the linux-builder.
   - Files: `nix/package.nix`, `nix/image.nix`, `nix/oci-index.nix`, `flake.nix`, `flake.lock`, `.github/workflows/docker.yml`, `.github/workflows/ci.yml`, `README.md`
+  - Outcome: cross-compiling Erlang failed in nixpkgs (`cross_check_erl`: no build-machine OTP, crypto/ssl disabled), so the native-matrix fallback shipped; image kept over the Dockerfile at 86.7 MB vs 58.6 MB (arm64).
   - Depends on: T6
   - Context: locally verifiable now: `nix build .#packages.aarch64-linux.repost-image-arm64`, the cross probe, `.#packages.aarch64-linux.repost-image`, and `nix build .#checks.aarch64-linux.launcher`. No Docker on this Mac, so the container smoke test and the x86_64-host builds are CI-only.
 
