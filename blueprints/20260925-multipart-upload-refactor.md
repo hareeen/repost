@@ -72,7 +72,7 @@ Key assumptions:
   - Depends on: T8, T10
   - Context: new e2e cases with a small `part_size`: a file smaller than one part goes as a single PUT; a file of several parts round-trips byte-exact with equal-size non-final parts; an upper-bound overflow after `create` makes the fake R2 see `DELETE ?uploadId`; a minimum-size failure aborts; a failing `UploadPart` aborts and returns 502. Memory: no field in the upload state may hold more than `part_size` + one transport chunk of file bytes.
 
-- [ ] T12: Docs (#10). README: the actual memory bound (one part + one chunk per upload), the httpc transport, the module layout from T3, the test count, and a recommended R2 lifecycle rule to abort incomplete multipart uploads after 1 day (catches uploads orphaned by a crash). spec §4: mist + gleam_httpc, and note the multipart strategy under §8. Rename `happy_path_chunked_request_chunked_to_r2_test`.
+- [x] T12: Docs (#10). README: the actual memory bound (one part + one chunk per upload), the httpc transport, the module layout from T3, the test count, and a recommended R2 lifecycle rule to abort incomplete multipart uploads after 1 day (catches uploads orphaned by a crash). spec §4: mist + gleam_httpc, and note the multipart strategy under §8. Rename `happy_path_chunked_request_chunked_to_r2_test`.
   - Files: `README.md`, `spec.md`, `test/streaming_e2e_test.gleam`
   - Depends on: T11
 
