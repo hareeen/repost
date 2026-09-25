@@ -53,7 +53,7 @@ Key assumptions:
   - Depends on: T6
   - Context: behavior change, message only (`policy condition failed for field: bucket`); separate commit on purpose.
 
-- [ ] T8: Phase sum type and Result errors in `upload` (#3, #5). Replace `ProcessState`'s `r2`/`policy_doc`/`current_field` with `CollectingFields(fields, bytes_used, count, current)` or `ReceivingFile(authorized, bytes_seen, chunks)`. The loop returns `Result(Uploaded(etag), ErrorResponse)`; `server` converts it to a response once (with `decision`). Delete the unreachable `NoR2`/`NoPolicy` branches and the stale "close R2" comment.
+- [x] T8: Phase sum type and Result errors in `upload` (#3, #5). Replace `ProcessState`'s `r2`/`policy_doc`/`current_field` with `CollectingFields(fields, bytes_used, count, current)` or `ReceivingFile(authorized, bytes_seen, chunks)`. The loop returns `Result(Uploaded(etag), ErrorResponse)`; `server` converts it to a response once (with `decision`). Delete the unreachable `NoR2`/`NoPolicy` branches and the stale "close R2" comment.
   - Files: `src/repost/upload.gleam`, `src/repost/server.gleam`
   - Depends on: T7
   - Context: still buffers the whole file in this task; T11 swaps in the sink. All existing e2e tests must pass unchanged.
