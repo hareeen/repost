@@ -32,7 +32,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T1
   - Context: formatting only. Confirm with `git diff --stat` that no Gleam file changes beyond whitespace/wrapping, and that the tests still pass.
 
-- [ ] T3: CI on the flake. `ci.yml` installs Nix (a maintained action, e.g. `cachix/install-nix-action`) and runs `nix flake check` (the hook checks), `nix develop -c treefmt --ci`, `nix develop -c gleam build --warnings-as-errors` and `nix develop -c gleam test`. Drop `erlef/setup-beam` and the Gleam 1.15.4 pin. Cache the Nix store only through a maintained action; if none fits, go without and say so.
+- [x] T3: CI on the flake. `ci.yml` installs Nix (a maintained action, e.g. `cachix/install-nix-action`) and runs `nix flake check` (the hook checks), `nix develop -c treefmt --ci`, `nix develop -c gleam build --warnings-as-errors` and `nix develop -c gleam test`. Drop `erlef/setup-beam` and the Gleam 1.15.4 pin. Cache the Nix store only through a maintained action; if none fits, go without and say so.
   - Files: `.github/workflows/ci.yml`
   - Depends on: T2
   - Context: `treefmt --ci` fails on any diff, so CI and the pre-commit hook enforce the same formatter.
