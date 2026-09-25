@@ -34,6 +34,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: erlang-shipment
-          path: result/
+          path: result/lib/repost
           if-no-files-found: error
           retention-days: 14
