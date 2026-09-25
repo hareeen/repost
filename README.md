@@ -23,10 +23,22 @@ Each upload holds about one 5 MiB part plus one 64 KiB network chunk in memory, 
 
 ## Quick start
 
-With Docker:
+With Docker, pull the published image:
 
 ```sh
-docker build -t repost .
+docker pull ghcr.io/hareeen/repost:main
+```
+
+Or, on Linux with Nix, build the image and load it into Docker as `repost:latest`:
+
+```sh
+nix build .#repost-image
+nix run .#repost-image.copyTo -- docker-daemon:repost:latest
+```
+
+Then run it, naming `ghcr.io/hareeen/repost:main` instead of `repost` if you pulled it:
+
+```sh
 docker run --rm -p 4000:4000 \
   -e SHIM_ACCESS_KEY_ID=shim-app-key \
   -e SHIM_SECRET_ACCESS_KEY=... \
@@ -95,6 +107,13 @@ gleam test    # 129 unit, integration and end-to-end tests
 The end-to-end tests run repost against a fake R2 server and send real chunked HTTP/1.1 uploads.
 They cover the single `PUT` and multipart paths byte for byte, size limits, and aborts after R2 failures.
 The SigV4 test vectors are checked against an independent Python `hmac` implementation.
+
+### Environment
+
+The Nix flake pins Gleam, Erlang and rebar3.
+Enter the shell with `nix develop`, or let direnv load it through the tracked `.envrc`.
+The shell installs git hooks: `treefmt` runs before each commit, and `statix`, `deadnix` and `gleam build --warnings-as-errors` run before each push.
+CI runs the same commands from the same flake, so local and CI results agree.
 
 ### Module layout
 
