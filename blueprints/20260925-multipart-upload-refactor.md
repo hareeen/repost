@@ -23,7 +23,7 @@ Key assumptions:
   - Depends on: T0
   - Context: `pipeline.run` and friends are removed in T6, and `r2_stream.start/send_chunk/finish/close` in T4, because their test consumers need a replacement first.
 
-- [ ] T2: Replace stdlib reimplementations (#8), behavior-preserving: `int_min`/`int_max` → `int.min`/`int.max` (`pipeline.gleam`, `pump.gleam`); `concat_chunks` → `bit_array.concat`; `do_decode_conditions` → `list.try_map`; validator `MaybeField` → `option.Option`; `time.pad2`/`pad4` → `string.pad_start`.
+- [x] T2: Replace stdlib reimplementations (#8), behavior-preserving: `int_min`/`int_max` → `int.min`/`int.max` (`pipeline.gleam`, `pump.gleam`); `concat_chunks` → `bit_array.concat`; `do_decode_conditions` → `list.try_map`; validator `MaybeField` → `option.Option`; `time.pad2`/`pad4` → `string.pad_start`.
   - Files: `src/repost/pipeline.gleam`, `src/repost/streaming/pump.gleam`, `src/repost/policy.gleam`, `src/repost/validator.gleam`, `src/repost/time.gleam`
   - Depends on: T1
   - Context: skip `r2_stream.encode/decode_headers`; that file is deleted in T5.
