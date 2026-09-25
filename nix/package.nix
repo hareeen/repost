@@ -1,6 +1,7 @@
 # The repost Erlang shipment, built offline from the vendored Hex packages, plus a bin/repost launcher.
 {
-  beam28Packages,
+  # beam_minimal leaves out wxWidgets and the other GUI libraries a headless server never loads, which shrinks the Linux runtime closure several-fold.
+  beamMinimal28Packages,
   buildPackages,
   callPackage,
   coreutils,
@@ -13,7 +14,7 @@ let
   config = builtins.fromTOML (builtins.readFile (source + "/gleam.toml"));
   deps = callPackage ./gleam-deps.nix {
     inherit source;
-    beamPackages = beam28Packages;
+    beamPackages = beamMinimal28Packages;
   };
 in
 stdenv.mkDerivation {
@@ -31,8 +32,8 @@ stdenv.mkDerivation {
 
   strictDeps = true;
   nativeBuildInputs = [
-    buildPackages.beam28Packages.erlang
-    buildPackages.beam28Packages.rebar3
+    buildPackages.beamMinimal28Packages.erlang
+    buildPackages.beamMinimal28Packages.rebar3
     buildPackages.gleam
     buildPackages.makeWrapper
   ];
@@ -62,7 +63,7 @@ stdenv.mkDerivation {
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
-          beam28Packages.erlang
+          beamMinimal28Packages.erlang
         ]
       } \
       --add-flags "$out/lib/${config.name}/entrypoint.sh run"
