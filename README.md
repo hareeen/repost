@@ -1,10 +1,11 @@
 # repost
 
-A streaming HTTP shim that translates browser-issued S3 POST Object uploads into SigV4-signed PUT requests against Cloudflare R2.
+A streaming HTTP shim that translates browser-issued S3 POST Object uploads into SigV4-signed requests against Cloudflare R2.
 The full protocol spec lives in [`spec.md`](spec.md).
 
 Built in Gleam on BEAM/OTP.
-File bytes flow from the browser through `mist.stream`, the multipart parser, and `ssl:send` to R2 with no disk hop and no in-RAM accumulation past one chunk in flight (~64 KiB).
+File bytes flow from the browser through `mist.stream` and the multipart parser to R2 through `gleam_httpc`, without a disk hop.
+Each in-flight upload buffers roughly one 5 MiB part plus one transport chunk; bytes cut from a joined buffer can briefly keep up to about twice the part size (about 10 MiB by default) alive between flushes.
 
 ## Configuration
 
@@ -30,7 +31,7 @@ The process exits with a precise error if any required variable is missing.
 
 ```sh
 gleam run        # foreground, with env vars set in the shell
-gleam test       # 98 unit + integration + e2e tests
+gleam test       # 130 unit, integration, and e2e tests
 ```
 
 ## Run in Docker
@@ -51,14 +52,14 @@ docker run --rm -p 4000:4000 \
 
 ## Module layout
 
-- `repost/server` is the mist entry point: it routes the request, dispatches uploads to the upload loop, and forces `Connection: close` on every error so mid-stream aborts (spec §10.2.3) are observable on the wire.
-- `repost/upload` runs the multipart event loop, accumulates text fields, validates them against the POST policy, opens the R2 connection, and forwards file chunks one at a time.
-- `repost/multipart` is an incremental multipart parser built on `gleam_http`'s continuations.
-- `repost/r2_stream` (with the `repost_stream_ffi.erl` FFI) is a chunked HTTP/1.1 PUT client over `gen_tcp` / `ssl`.
-- `repost/sigv4` derives signing keys, verifies the browser's POST policy signature, and signs the outgoing PUT.
-- `repost/authorize`, `repost/policy`, `repost/policy/validator` cover the spec §7 + §10 validation pipeline.
-- `repost/router` extracts the bucket from path-style or virtual-host requests.
-- `repost/cors` and `repost/errors` cover CORS allow-list logic and S3-style XML error responses.
+- `repost/server` handles mist requests; `repost/server/response` builds upload responses.
+- `repost/upload` runs the multipart event loop; `repost/upload/sink` buffers parts and selects a single PUT or R2 multipart upload.
+- `repost/authorize`, `repost/policy`, and `repost/policy/validator` validate POST policies and form fields.
+- `repost/multipart` parses incoming multipart forms; `repost/multipart/boundary` handles boundaries.
+- `repost/sigv4` signs R2 requests and verifies POST signatures; `repost/sigv4/uri` encodes request paths.
+- `repost/r2` sends signed requests through `gleam_httpc`; `repost/r2/put_object`, `repost/r2/multipart_upload`, and `repost/r2/xml` handle R2 operations and responses.
+- `repost/router`, `repost/cors`, and `repost/errors` handle routing, CORS, and S3-style errors.
+- `repost/config` loads settings; `repost/time` provides time formatting.
 
 ## Tests
 
@@ -68,11 +69,16 @@ gleam test
 
 Suite includes:
 
-- SigV4 vectors cross-validated against an independent Python `hmac` reference (signing-key derivation, POST-policy signature, PUT signature).
-- `validator` over every §10.5 condition shape (eq, starts-with, content-length-range, coverage check, exempt list).
-- `multipart_stream` proves chunks of the file part arrive incrementally even when the parser is fed 17-byte transport chunks.
-- `r2_stream` runs against a live mist server playing the role of R2, exercising `gen_tcp` / `ssl` send + chunked response decoding.
-- `streaming_e2e_test` boots the shim and a fake R2, sends a real chunked HTTP/1.1 multipart POST, and verifies bytes round-trip plus mid-stream `content-length-range` abort behaviour (spec §10.2.3).
+- SigV4 vectors cross-validated against an independent Python `hmac` reference (signing-key derivation, POST-policy signature, and signed R2 requests).
+- Policy validation over every §10.5 condition shape (eq, starts-with, content-length-range, coverage check, exempt list).
+- Multipart parsing with transport chunks crossing form boundaries.
+- R2 request and XML tests, including multipart operations and an error inside a successful HTTP response.
+- End-to-end tests with a chunked HTTP/1.1 browser request and a fake R2 verify single PUT for files up to one part, byte-exact multipart uploads for larger files, and aborts on size limits and R2 failures.
+
+## Operations
+
+Configure an R2 lifecycle rule to abort incomplete multipart uploads after 1 day.
+A process crash during an upload cannot run the abort request, so the rule clears orphaned uploads.
 
 ## License
 

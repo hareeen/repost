@@ -258,7 +258,7 @@ fn post_file(
   post_chunked(port, "my-bucket", "https://outline.example.com", body, 41)
 }
 
-pub fn happy_path_chunked_request_chunked_to_r2_test() {
+pub fn happy_path_chunked_request_single_put_test() {
   let #(capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 

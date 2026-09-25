@@ -26,9 +26,9 @@ The only change required on the application side is pointing `AWS_S3_UPLOAD_BUCK
 ## 4. Technology
 
 - **Language:** Gleam (runs on BEAM/OTP).
-- **HTTP server:** `wisp` + `mist`.
+- **HTTP server:** `mist`.
 - **Cryptography:** `gleam_crypto` (HMAC-SHA256).
-- **R2 client:** Hand-rolled SigV4 signing + `gleam_httpc`. No AWS SDK dependency—PutObject is a single `PUT` request, roughly 50 lines of signing code.
+- **R2 client:** `gleam_httpc` with hand-rolled SigV4 signing. No AWS SDK dependency.
 
 ## 5. Configuration
 
@@ -156,17 +156,18 @@ Compare `expected` against `x-amz-signature` using constant-time equality.
 
 After validation passes:
 
-1. **Build the PUT request:**
+1. **Upload the file:**
    - URL: `https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com/{R2_BUCKET}/{key}`
-   - Method: `PUT`
-   - Body: Stream the `file` field bytes directly. Do not buffer the entire file in memory.
-   - Headers: `Content-Type` from the form's `Content-Type` field (if provided), plus SigV4 authorization headers signed with `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`.
+   - Files up to one 5 MiB part use a single PutObject `PUT` request.
+   - Larger files use CreateMultipartUpload, UploadPart with 5 MiB non-final parts, and CompleteMultipartUpload; a failure after creation triggers AbortMultipartUpload.
+   - Buffer roughly one part plus one transport chunk per upload; bytes cut from a joined buffer can briefly keep up to about twice the part size alive between flushes.
+   - Include `Content-Type` from the form's `Content-Type` field (if provided) and SigV4 authorization headers signed with `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`.
 
 2. **Forward the result:**
    - On success: return `204` to the client with R2's `ETag` header and the appropriate CORS headers.
    - On failure: return `502 InternalError`.
 
-**Key architectural point:** The shim does _not_ forward the original signed request to R2. It extracts only the file bytes and constructs a completely new PutObject request signed with R2 credentials. The browser↔shim signature and the shim↔R2 signature are independent; the only thing they share is the file content.
+**Key architectural point:** The shim does _not_ forward the original signed request to R2. It extracts only the file bytes and constructs new R2 requests signed with R2 credentials. The browser↔shim signature and the shim↔R2 signature are independent; the only thing they share is the file content.
 
 ## 9. v2 — Virtual-Host Style Routing
 
