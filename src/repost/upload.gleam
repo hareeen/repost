@@ -6,7 +6,6 @@ import gleam/dict.{type Dict}
 import gleam/http/response as http_response
 import gleam/int
 import gleam/list
-import gleam/result
 import gleam/string
 import mist
 
@@ -15,7 +14,6 @@ import repost/config.{type Config}
 import repost/cors
 import repost/errors.{type ErrorResponse}
 import repost/multipart
-import repost/policy
 import repost/r2
 import repost/r2/put_object
 import repost/server/response
@@ -61,7 +59,6 @@ pub fn run(
       r2: NoR2,
       file_bytes_seen: 0,
       file_chunks: [],
-      policy_doc: NoPolicy,
     ),
   )
 }
@@ -74,12 +71,7 @@ type CurrentField {
 
 type R2State {
   NoR2
-  R2Buffered(key: String, content_type: Result(String, Nil))
-}
-
-type PolicySlot {
-  NoPolicy
-  HasPolicy(policy.Policy)
+  R2Buffered(authorized: authorize.Authorized)
 }
 
 type ProcessState {
@@ -94,7 +86,6 @@ type ProcessState {
     r2: R2State,
     file_bytes_seen: Int,
     file_chunks: List(BitArray),
-    policy_doc: PolicySlot,
   )
 }
 
@@ -244,16 +235,22 @@ fn begin_file_part(
       )
     }
     NoR2 ->
-      case validate_pre_file(state) {
+      case
+        authorize.authorize(
+          state.fields,
+          state.bucket,
+          state.deps.config,
+          state.deps.clock(),
+        )
+      {
         Error(err) -> response.xml_error(state.decision, err)
-        Ok(#(policy_doc, key, content_type)) ->
+        Ok(authorized) ->
           loop(
             parser,
             ProcessState(
               ..state,
               current_field: StreamingFile(name: field_name),
-              r2: R2Buffered(key:, content_type:),
-              policy_doc: HasPolicy(policy_doc),
+              r2: R2Buffered(authorized:),
             ),
           )
       }
@@ -298,10 +295,11 @@ fn finalize(state: ProcessState) -> http_response.Response(mist.ResponseData) {
         state.decision,
         errors.invalid_request("missing `file` field"),
       )
-    R2Buffered(key:, content_type:) ->
+    R2Buffered(authorized:) ->
       case check_lower_bound(state) {
         Error(err) -> response.xml_error(state.decision, err)
-        Ok(_) -> put_buffered_to_r2(state, key, content_type)
+        Ok(_) ->
+          put_buffered_to_r2(state, authorized.key, authorized.content_type)
       }
   }
 }
@@ -338,68 +336,12 @@ fn put_buffered_to_r2(
   }
 }
 
-fn validate_pre_file(
-  state: ProcessState,
-) -> Result(#(policy.Policy, String, Result(String, Nil)), ErrorResponse) {
-  let lowered = lowercase_keys(state.fields)
-  use _ <- result.try(authorize.check_required(lowered))
-  use credential <- result.try(authorize.check_credential(
-    lowered,
-    state.deps.config.shim_access_key_id,
-    state.deps.config.shim_region,
-  ))
-  use policy_doc <- result.try(authorize.check_policy(lowered))
-  use _ <- result.try(authorize.check_expiration(policy_doc, state.deps.clock()))
-  use _ <- result.try(check_conditions_pre_size(
-    lowered,
-    state.bucket,
-    policy_doc,
-  ))
-  use _ <- result.try(authorize.check_signature(
-    lowered,
-    credential,
-    state.deps.config.shim_secret_access_key,
-  ))
-  use key <- result.try(authorize.check_key(lowered))
-
-  let content_type = dict.get(lowered, "content-type")
-  Ok(#(policy_doc, key, content_type))
-}
-
-/// At this point file_size is unknown, so length conditions are enforced by
-/// the streaming byte counter and final lower-bound check. All field
-/// conditions still need to run before the R2 connection is opened.
-fn check_conditions_pre_size(
-  lowered: Dict(String, String),
-  bucket: String,
-  policy_doc: policy.Policy,
-) -> Result(Nil, ErrorResponse) {
-  let with_file = dict.insert(lowered, "file", "")
-  let pre_size_policy =
-    policy.Policy(
-      ..policy_doc,
-      conditions: without_length_conditions(policy_doc.conditions),
-    )
-  authorize.check_conditions(with_file, bucket, 0, pre_size_policy)
-}
-
-fn without_length_conditions(
-  conditions: List(policy.Condition),
-) -> List(policy.Condition) {
-  list.filter(conditions, fn(c) {
-    case c {
-      policy.ContentLengthRange(_, _) -> False
-      _ -> True
-    }
-  })
-}
-
 fn effective_upper_bound(state: ProcessState) -> Int {
   let cfg_max = state.deps.config.max_upload_bytes
-  case state.policy_doc {
-    NoPolicy -> cfg_max
-    HasPolicy(p) ->
-      case authorize.length_bounds(p) {
+  case state.r2 {
+    NoR2 -> cfg_max
+    R2Buffered(authorized:) ->
+      case authorized.length_bounds {
         authorize.LengthBounds(min: _, max:) -> int.min(max, cfg_max)
         authorize.NoLengthBounds -> cfg_max
       }
@@ -407,10 +349,10 @@ fn effective_upper_bound(state: ProcessState) -> Int {
 }
 
 fn check_lower_bound(state: ProcessState) -> Result(Nil, ErrorResponse) {
-  case state.policy_doc {
-    NoPolicy -> Ok(Nil)
-    HasPolicy(p) ->
-      case authorize.length_bounds(p) {
+  case state.r2 {
+    NoR2 -> Ok(Nil)
+    R2Buffered(authorized:) ->
+      case authorized.length_bounds {
         authorize.LengthBounds(min:, max: _) ->
           case state.file_bytes_seen >= min {
             True -> Ok(Nil)
@@ -450,11 +392,4 @@ fn handle_parse_error(
         errors.invalid_request("malformed multipart"),
       )
   }
-}
-
-fn lowercase_keys(d: Dict(String, String)) -> Dict(String, String) {
-  d
-  |> dict.to_list
-  |> list.map(fn(p) { #(string.lowercase(p.0), p.1) })
-  |> dict.from_list
 }

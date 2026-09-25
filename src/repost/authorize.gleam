@@ -1,75 +1,53 @@
-//// Validation pipeline (spec §7). `run/1` runs every step against a
-//// collected `Inputs`; the per-step functions exist so the streaming handler
-//// can enforce some checks before the file body has been read.
+//// Validates upload fields before the file body is read.
 
-import gleam/dict
+import gleam/dict.{type Dict}
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
 
+import repost/config.{type Config}
 import repost/errors.{type ErrorResponse}
 import repost/policy.{type Condition, type FieldMap, type Policy}
 import repost/policy/validator
 import repost/sigv4
 import repost/time
 
-pub type Inputs {
-  Inputs(
-    bucket: String,
-    /// Lowercased field name → value, with the `file` field excluded (its
-    /// size lives in `file_size`).
-    fields: FieldMap,
-    /// Case-preserved values, retained for the case-insensitive
-    /// `Content-Type` lookup we forward to R2.
-    raw_values: List(#(String, String)),
-    file_size: Int,
-    now_seconds: Int,
-    shim_access_key_id: String,
-    shim_secret_access_key: String,
-    shim_region: String,
-    max_upload_bytes: Int,
-  )
-}
-
-pub type ValidatedRequest {
-  ValidatedRequest(
-    bucket: String,
+pub type Authorized {
+  Authorized(
     key: String,
     content_type: Result(String, Nil),
+    length_bounds: LengthBounds,
   )
 }
 
-pub fn run(inputs: Inputs) -> Result(ValidatedRequest, ErrorResponse) {
-  // Spec §7 order: required → algorithm → credential → policy → expiration
-  // → conditions → signature → size.
-  use _ <- result.try(check_required(inputs.fields))
+pub fn authorize(
+  fields: Dict(String, String),
+  bucket: String,
+  config: Config,
+  now: Int,
+) -> Result(Authorized, ErrorResponse) {
+  let lowered = lowercase_keys(fields)
+  use _ <- result.try(check_required(lowered))
+  use key <- result.try(check_key(lowered))
   use credential <- result.try(check_credential(
-    inputs.fields,
-    inputs.shim_access_key_id,
-    inputs.shim_region,
+    lowered,
+    config.shim_access_key_id,
+    config.shim_region,
   ))
-  use policy_doc <- result.try(check_policy(inputs.fields))
-  use _ <- result.try(check_expiration(policy_doc, inputs.now_seconds))
-  use _ <- result.try(check_conditions(
-    inputs.fields,
-    inputs.bucket,
-    inputs.file_size,
-    policy_doc,
-  ))
+  use policy_doc <- result.try(check_policy(lowered))
+  use _ <- result.try(check_expiration(policy_doc, now))
+  use _ <- result.try(check_conditions_pre_size(lowered, bucket, policy_doc))
   use _ <- result.try(check_signature(
-    inputs.fields,
+    lowered,
     credential,
-    inputs.shim_secret_access_key,
+    config.shim_secret_access_key,
   ))
-  use _ <- result.try(check_size(inputs.file_size, inputs.max_upload_bytes))
-
-  use key <- result.try(check_key(inputs.fields))
-  let content_type = lookup_form_value(inputs.raw_values, "content-type")
-  Ok(ValidatedRequest(bucket: inputs.bucket, key:, content_type:))
+  let content_type = dict.get(lowered, "content-type")
+  Ok(Authorized(key:, content_type:, length_bounds: length_bounds(policy_doc)))
 }
 
-pub fn check_required(fields: FieldMap) -> Result(Nil, ErrorResponse) {
+fn check_required(fields: FieldMap) -> Result(Nil, ErrorResponse) {
   let needed = [
     "key", "policy", "x-amz-algorithm", "x-amz-credential", "x-amz-date",
     "x-amz-signature",
@@ -82,14 +60,14 @@ pub fn check_required(fields: FieldMap) -> Result(Nil, ErrorResponse) {
 }
 
 /// An empty key would turn the R2 PUT into a bucket-level request.
-pub fn check_key(fields: FieldMap) -> Result(String, ErrorResponse) {
+fn check_key(fields: FieldMap) -> Result(String, ErrorResponse) {
   case required_field(fields, "key") {
     "" -> Error(errors.invalid_request("key must not be empty"))
     key -> Ok(key)
   }
 }
 
-pub fn check_credential(
+fn check_credential(
   fields: FieldMap,
   shim_access_key_id: String,
   shim_region: String,
@@ -125,7 +103,7 @@ pub fn check_credential(
   Ok(cred)
 }
 
-pub fn check_policy(fields: FieldMap) -> Result(Policy, ErrorResponse) {
+fn check_policy(fields: FieldMap) -> Result(Policy, ErrorResponse) {
   let raw = required_field(fields, "policy")
   case policy.decode_policy(raw) {
     Ok(p) -> Ok(p)
@@ -140,7 +118,7 @@ pub fn check_policy(fields: FieldMap) -> Result(Policy, ErrorResponse) {
   }
 }
 
-pub fn check_expiration(
+fn check_expiration(
   policy_doc: Policy,
   now_seconds: Int,
 ) -> Result(Nil, ErrorResponse) {
@@ -157,7 +135,7 @@ pub fn check_expiration(
   }
 }
 
-pub fn check_signature(
+fn check_signature(
   fields: FieldMap,
   credential: sigv4.Credential,
   shim_secret: String,
@@ -178,7 +156,7 @@ pub fn check_signature(
   }
 }
 
-pub fn check_conditions(
+fn check_conditions(
   fields: FieldMap,
   bucket: String,
   file_size: Int,
@@ -198,7 +176,7 @@ pub fn check_conditions(
   }
 }
 
-pub fn check_bucket_condition(
+fn check_bucket_condition(
   conditions: List(Condition),
   bucket: String,
 ) -> Result(Nil, ErrorResponse) {
@@ -220,22 +198,12 @@ pub fn check_bucket_condition(
   }
 }
 
-pub fn check_size(
-  file_size: Int,
-  max_upload_bytes: Int,
-) -> Result(Nil, ErrorResponse) {
-  case file_size > max_upload_bytes {
-    True -> Error(errors.entity_too_large())
-    False -> Ok(Nil)
-  }
-}
-
 pub type LengthBounds {
   NoLengthBounds
   LengthBounds(min: Int, max: Int)
 }
 
-pub fn length_bounds(policy_doc: Policy) -> LengthBounds {
+fn length_bounds(policy_doc: Policy) -> LengthBounds {
   list.fold(policy_doc.conditions, NoLengthBounds, fn(bounds, condition) {
     case condition, bounds {
       policy.ContentLengthRange(min:, max:), NoLengthBounds ->
@@ -246,6 +214,37 @@ pub fn length_bounds(policy_doc: Policy) -> LengthBounds {
       _, _ -> bounds
     }
   })
+}
+
+fn check_conditions_pre_size(
+  fields: FieldMap,
+  bucket: String,
+  policy_doc: Policy,
+) -> Result(Nil, ErrorResponse) {
+  // File length is checked while reading; every other condition is checked here.
+  let with_file = dict.insert(fields, "file", "")
+  let pre_size_policy =
+    policy.Policy(
+      ..policy_doc,
+      conditions: without_length_conditions(policy_doc.conditions),
+    )
+  check_conditions(with_file, bucket, 0, pre_size_policy)
+}
+
+fn without_length_conditions(conditions: List(Condition)) -> List(Condition) {
+  list.filter(conditions, fn(condition) {
+    case condition {
+      policy.ContentLengthRange(_, _) -> False
+      _ -> True
+    }
+  })
+}
+
+fn lowercase_keys(fields: Dict(String, String)) -> FieldMap {
+  fields
+  |> dict.to_list
+  |> list.map(fn(pair) { #(string.lowercase(pair.0), pair.1) })
+  |> dict.from_list
 }
 
 fn required_field(fields: FieldMap, name: String) -> String {
@@ -270,19 +269,5 @@ fn reject_unless(
   case condition {
     True -> Ok(Nil)
     False -> Error(err)
-  }
-}
-
-fn lookup_form_value(
-  raw_values: List(#(String, String)),
-  lowercased_name: String,
-) -> Result(String, Nil) {
-  case raw_values {
-    [] -> Error(Nil)
-    [#(k, v), ..rest] ->
-      case string.lowercase(k) == lowercased_name {
-        True -> Ok(v)
-        False -> lookup_form_value(rest, lowercased_name)
-      }
   }
 }
