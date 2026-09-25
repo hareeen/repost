@@ -14,7 +14,7 @@ Key assumptions:
 
 ## Tasks
 
-- [ ] T0: Commit the already-landed security fixes as their own commit (bucket must equal `R2_BUCKET`, `pipeline.check_key` rejects empty keys, pump caps text fields at 64 and charges names against the 1 MiB cap).
+- [x] T0: Commit the already-landed security fixes as their own commit (bucket must equal `R2_BUCKET`, `pipeline.check_key` rejects empty keys, pump caps text fields at 64 and charges names against the 1 MiB cap).
   - Files: `src/repost/streaming_handler.gleam`, `src/repost/pipeline.gleam`, `src/repost/streaming/pump.gleam`, `test/streaming_e2e_test.gleam`
   - Context: already done and tested (104 passing); this task only commits.
 
