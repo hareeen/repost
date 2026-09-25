@@ -99,7 +99,10 @@ fn handle_upload(
           case open_stream(req) {
             Error(err) -> response.xml_error(decision, err)
             Ok(reader) ->
-              upload.run(multipart.new(reader, b), deps, decision, bucket)
+              case upload.run(multipart.new(reader, b), deps, bucket) {
+                Error(err) -> response.xml_error(decision, err)
+                Ok(upload.Uploaded(etag:)) -> response.success(decision, etag)
+              }
           }
       }
     }
