@@ -47,7 +47,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T4
   - Context: can't be built on this Mac. Verify locally that `nix eval .#packages.x86_64-linux.repost-image.drvPath` evaluates; the real build is T6's CI run.
 
-- [ ] T6: Image workflow on the flake. `docker.yml` keeps the triggers and the `metadata-action` tags, but builds with `nix build .#repost-image` and pushes each tag with `nix run .#repost-image.copyTo -- docker://ghcr.io/<repo>:<tag>`, authenticating with `GITHUB_TOKEN`. Before pushing, CI loads the image with `copyToDockerDaemon`, starts it with a missing required env var, and asserts it exits naming the variable. README: replace "Quick start" Docker build with `nix build .#repost-image` (plus the pull-from-GHCR option), and add a "Development" note on `nix develop` / direnv and the hooks.
+- [x] T6: Image workflow on the flake. `docker.yml` keeps the triggers and the `metadata-action` tags, but builds with `nix build .#repost-image` and pushes each tag with `nix run .#repost-image.copyTo -- docker://ghcr.io/<repo>:<tag>`, authenticating with `GITHUB_TOKEN`. Before pushing, CI loads the image with `copyToDockerDaemon`, starts it with a missing required env var, and asserts it exits naming the variable. README: replace "Quick start" Docker build with `nix build .#repost-image` (plus the pull-from-GHCR option), and add a "Development" note on `nix develop` / direnv and the hooks.
   - Files: `.github/workflows/docker.yml`, `README.md`
   - Depends on: T5, T3
   - Context: keep the Dockerfile in this task. The workflow can only be proven by a CI run, which needs a push, and pushing is your call.
