@@ -43,7 +43,7 @@ Key assumptions:
   - Depends on: T4
   - Context: keep the existing PUT signing test vectors passing byte-for-byte; add one vector with a query string, cross-checked against a Python `hmac` reference like the existing ones. Check in the e2e capture that R2 sees exactly one `host` and one `content-length`. Behavior preserved: the happy-path e2e assertions stay unchanged.
 
-- [ ] T6: One validation entry point (#4). Move `validate_pre_file`, `check_conditions_pre_size` and `without_length_conditions` from `upload` into `authorize.authorize(fields, bucket, config, now) -> Result(Authorized, ErrorResponse)`, where `Authorized(key, content_type, length_bounds)`. Delete `authorize.run`, `Inputs`, `ValidatedRequest`, `check_size`, `lookup_form_value`; make individual checks private unless a test needs them. Rewrite `authorize_test` (was `pipeline_test`) against `authorize`.
+- [x] T6: One validation entry point (#4). Move `validate_pre_file`, `check_conditions_pre_size` and `without_length_conditions` from `upload` into `authorize.authorize(fields, bucket, config, now) -> Result(Authorized, ErrorResponse)`, where `Authorized(key, content_type, length_bounds)`. Delete `authorize.run`, `Inputs`, `ValidatedRequest`, `check_size`, `lookup_form_value`; make individual checks private unless a test needs them. Rewrite `authorize_test` (was `pipeline_test`) against `authorize`.
   - Files: `src/repost/authorize.gleam`, `src/repost/upload.gleam`, `test/authorize_test.gleam`
   - Depends on: T5
   - Context: the step order must stay: required, key, credential, policy, expiration, conditions without length, signature.
