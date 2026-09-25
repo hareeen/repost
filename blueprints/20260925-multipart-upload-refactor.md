@@ -58,7 +58,7 @@ Key assumptions:
   - Depends on: T7
   - Context: still buffers the whole file in this task; T11 swaps in the sink. All existing e2e tests must pass unchanged.
 
-- [ ] T9: R2 XML extractor. `r2/xml.gleam`: `element_text(xml, tag) -> Result(String, XmlError)` for the first `<tag>…</tag>`, decoding `&amp; &lt; &gt; &quot; &apos;`; `error_code(xml) -> Result(String, Nil)` to detect `<Error><Code>`. Typed errors, no sentinels.
+- [x] T9: R2 XML extractor. `r2/xml.gleam`: `element_text(xml, tag) -> Result(String, XmlError)` for the first `<tag>…</tag>`, decoding `&amp; &lt; &gt; &quot; &apos;`; `error_code(xml) -> Result(String, Nil)` to detect `<Error><Code>`. Typed errors, no sentinels.
   - Files: `src/repost/r2/xml.gleam`, `test/r2_xml_test.gleam`
   - Depends on: T5
   - Context: fixtures copied from AWS's documented `InitiateMultipartUploadResult`, `CompleteMultipartUploadResult`, and 200-with-`<Error>` responses.
