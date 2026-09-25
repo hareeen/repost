@@ -3,18 +3,32 @@ import gleam/erlang/process
 import gleam/http
 import gleam/http/request as http_request
 import gleam/http/response as http_response
+import gleam/option.{type Option, None, Some}
 import mist
 
 pub type Captured {
   Captured(
     method: http.Method,
     path: String,
+    query: Option(String),
     headers: List(#(String, String)),
     body: BitArray,
   )
 }
 
+pub type Failure {
+  NoFailure
+  FailUploadPart
+  CompleteEmbeddedError
+}
+
 pub fn start() -> #(process.Subject(Captured), Int) {
+  start_with_failure(NoFailure)
+}
+
+pub fn start_with_failure(
+  failure: Failure,
+) -> #(process.Subject(Captured), Int) {
   let capture = process.new_subject()
   let port_subj = process.new_subject()
   let assert Ok(_) =
@@ -26,13 +40,12 @@ pub fn start() -> #(process.Subject(Captured), Int) {
             Captured(
               method: req2.method,
               path: req2.path,
+              query: req2.query,
               headers: req2.headers,
               body: req2.body,
             ),
           )
-          http_response.new(200)
-          |> http_response.set_header("etag", "\"e2e-streamed\"")
-          |> http_response.set_body(mist.Bytes(bytes_tree.from_string("")))
+          reply(req2.method, req2.query, failure)
         }
         Error(_) ->
           http_response.new(400)
@@ -45,4 +58,51 @@ pub fn start() -> #(process.Subject(Captured), Int) {
     |> mist.start
   let assert Ok(port) = process.receive(port_subj, 5000)
   #(capture, port)
+}
+
+fn reply(
+  method: http.Method,
+  query: Option(String),
+  failure: Failure,
+) -> http_response.Response(mist.ResponseData) {
+  case method, query {
+    http.Post, Some("uploads=") ->
+      xml_reply(
+        200,
+        "<InitiateMultipartUploadResult><UploadId>fake-upload-id</UploadId></InitiateMultipartUploadResult>",
+      )
+    http.Put, Some(_) ->
+      case failure {
+        FailUploadPart ->
+          xml_reply(500, "<Error><Code>InternalError</Code></Error>")
+        _ ->
+          http_response.new(200)
+          |> http_response.set_header("etag", "\"part-etag\"")
+          |> http_response.set_body(mist.Bytes(bytes_tree.from_string("")))
+      }
+    http.Post, Some(_) ->
+      case failure {
+        CompleteEmbeddedError ->
+          xml_reply(200, "<Error><Code>InternalError</Code></Error>")
+        _ ->
+          xml_reply(
+            200,
+            "<CompleteMultipartUploadResult><ETag>\"complete-etag\"</ETag></CompleteMultipartUploadResult>",
+          )
+      }
+    http.Delete, Some(_) -> xml_reply(204, "")
+    http.Put, None ->
+      http_response.new(200)
+      |> http_response.set_header("etag", "\"e2e-streamed\"")
+      |> http_response.set_body(mist.Bytes(bytes_tree.from_string("")))
+    _, _ -> xml_reply(400, "bad")
+  }
+}
+
+fn xml_reply(
+  status: Int,
+  body: String,
+) -> http_response.Response(mist.ResponseData) {
+  http_response.new(status)
+  |> http_response.set_body(mist.Bytes(bytes_tree.from_string(body)))
 }
