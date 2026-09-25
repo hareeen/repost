@@ -15,39 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: erlef/setup-beam@v1
-        with:
-          otp-version: "28"
-          gleam-version: "1.15.4"
-          rebar3-version: "3"
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
 
-      - name: Cache Gleam build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/packages
-            build/erlang
-          key: ${{ runner.os }}-gleam-${{ hashFiles('manifest.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gleam-
-
-      - run: gleam deps download
-      - run: gleam format --check src test
-      - run: gleam build
-      - run: gleam test
+      - run: nix flake check
+      - run: nix develop -c treefmt --ci
+      - run: nix develop -c gleam build --warnings-as-errors
+      - run: nix develop -c gleam test
 
   shipment:
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          otp-version: "28"
-          gleam-version: "1.15.4"
-          rebar3-version: "3"
-      - run: gleam deps download
-      - run: gleam export erlang-shipment
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - run: nix develop -c gleam export erlang-shipment
       - uses: actions/upload-artifact@v4
         with:
           name: erlang-shipment
