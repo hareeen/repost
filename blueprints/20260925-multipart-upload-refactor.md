@@ -18,7 +18,7 @@ Key assumptions:
   - Files: `src/repost/streaming_handler.gleam`, `src/repost/pipeline.gleam`, `src/repost/streaming/pump.gleam`, `test/streaming_e2e_test.gleam`
   - Context: already done and tested (104 passing); this task only commits.
 
-- [ ] T1: Delete standalone dead code (#1): `r2_put.open`, `Opened`, `transport_headers`, `strip_content_length`, `open_timeout_ms`; `multipart_stream.with_header_cap` (0 callers); unwrap `sigv4.PutSignOutput` so `sign_put` returns the header list; remove the unused `gleam_otp` dependency. Replace `policy.build_field_map` in tests with a local test helper and delete it from `src`.
+- [x] T1: Delete standalone dead code (#1): `r2_put.open`, `Opened`, `transport_headers`, `strip_content_length`, `open_timeout_ms`; `multipart_stream.with_header_cap` (0 callers); unwrap `sigv4.PutSignOutput` so `sign_put` returns the header list; remove the unused `gleam_otp` dependency. Replace `policy.build_field_map` in tests with a local test helper and delete it from `src`.
   - Files: `src/repost/streaming/r2_put.gleam`, `src/repost/multipart_stream.gleam`, `src/repost/sigv4.gleam`, `src/repost/policy.gleam`, `gleam.toml`, `manifest.toml`, `test/validator_test.gleam`, `test/pipeline_test.gleam`, `test/sigv4_test.gleam`
   - Depends on: T0
   - Context: `pipeline.run` and friends are removed in T6, and `r2_stream.start/send_chunk/finish/close` in T4, because their test consumers need a replacement first.
