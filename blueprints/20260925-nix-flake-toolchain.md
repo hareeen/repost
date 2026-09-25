@@ -42,7 +42,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T1
   - Context: if Gleam insists on the network or re-resolves despite a matching manifest, stop and report; do not fall back to `--impure` or `builtins.getEnv`. A stale `manifest.toml` must fail the build loudly. Verify with `nix build .#default` locally (the shipment is BEAM bytecode and builds on Darwin), then run `result/bin/repost` with the env vars unset and confirm it exits naming the first missing variable.
 
-- [ ] T5: Release image. `nix/image.nix` uses `nix2container.buildImage` with a `copyToRoot` that links only `bin/repost` and the CA bundle at `/etc/ssl/certs/ca-certificates.crt`; `Entrypoint = ["/bin/repost"]`, `User = "65532:65532"`, `ExposedPorts."4000/tcp"`. Expose it as `packages.repost-image` on Linux systems only. Add the `nix2container` input with `inputs.nixpkgs.follows`.
+- [x] T5: Release image. `nix/image.nix` uses `nix2container.buildImage` with a `copyToRoot` that links only `bin/repost` and the CA bundle at `/etc/ssl/certs/ca-certificates.crt`; `Entrypoint = ["/bin/repost"]`, `User = "65532:65532"`, `ExposedPorts."4000/tcp"`. Expose it as `packages.repost-image` on Linux systems only. Add the `nix2container` input with `inputs.nixpkgs.follows`.
   - Files: `nix/image.nix`, `flake.nix`, `flake.lock`
   - Depends on: T4
   - Context: can't be built on this Mac. Verify locally that `nix eval .#packages.x86_64-linux.repost-image.drvPath` evaluates; the real build is T6's CI run.
