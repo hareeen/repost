@@ -3,6 +3,8 @@
   cacert,
   nix2container,
   package,
+  repository,
+  revision,
   runCommand,
 }:
 let
@@ -23,5 +25,9 @@ nix2container.buildImage {
     User = "65532:65532";
     Env = [ "SSL_CERT_FILE=${caBundle}" ];
     ExposedPorts."4000/tcp" = { };
+    Labels = {
+      "org.opencontainers.image.source" = repository;
+      "org.opencontainers.image.revision" = revision;
+    };
   };
 }

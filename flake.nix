@@ -44,15 +44,22 @@
           system,
           ...
         }:
+        let
+          inherit (pkgs.stdenv.hostPlatform) isLinux;
+        in
         {
           packages = {
             default = pkgs.callPackage ./nix/package.nix { source = ./.; };
           }
           # Images are Linux artifacts; Darwin systems get no image output rather than a broken one.
-          // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-            repost-image = pkgs.callPackage ./nix/image.nix {
+          # nixpkgs cannot cross-compile Erlang (its build finds no Erlang for the build machine), so each Linux system builds only its own architecture and CI merges the two into one index.
+          // lib.optionalAttrs isLinux {
+            # nix2container tags the image with the same GOARCH, so the output name and the image platform agree.
+            "repost-image-${pkgs.go.GOARCH}" = pkgs.callPackage ./nix/image.nix {
               inherit (inputs.nix2container.packages.${system}) nix2container;
               package = self'.packages.default;
+              repository = "https://github.com/hareeen/repost";
+              revision = inputs.self.rev or inputs.self.dirtyRev;
             };
           };
 
