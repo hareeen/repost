@@ -91,10 +91,6 @@ pub fn new(reader: Reader, boundary: String) -> State {
   )
 }
 
-pub fn with_header_cap(state: State, cap: Int) -> State {
-  State(..state, header_cap: cap)
-}
-
 pub fn next_event(state: State) -> Result(#(Event, State), ParseError) {
   case state.queued {
     [event, ..rest] -> Ok(#(event, State(..state, queued: rest)))

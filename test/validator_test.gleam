@@ -1,11 +1,18 @@
 //// Strict policy validator (spec §10.5).
 
 import gleam/dict
+import gleam/list
+import gleam/string
 import repost/policy
 import repost/validator
 
 fn fields(pairs: List(#(String, String))) -> policy.FieldMap {
-  policy.build_field_map(pairs)
+  pairs
+  |> list.map(fn(pair) {
+    let #(key, value) = pair
+    #(string.lowercase(key), value)
+  })
+  |> dict.from_list
 }
 
 pub fn happy_path_test() {

@@ -33,15 +33,6 @@ pub type DecodeFailure {
 pub type FieldMap =
   Dict(String, String)
 
-pub fn build_field_map(values: List(#(String, String))) -> FieldMap {
-  values
-  |> list.map(fn(p) {
-    let #(k, v) = p
-    #(string.lowercase(k), v)
-  })
-  |> dict.from_list
-}
-
 pub fn decode_policy(base64_policy: String) -> Result(Policy, DecodeFailure) {
   use raw <- result.try(
     bit_array.base64_decode(base64_policy)

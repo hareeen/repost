@@ -130,7 +130,7 @@ pub fn sign_put_matches_python_reference_test() {
   let out = sigv4.sign_put(input)
   let expected =
     "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20240101/us-east-1/s3/aws4_request,SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,Signature=7ebab692f8c54b347d609ccf878aa832576e952c61e7ecff0583c5b35ff0cc94"
-  assert get_header(out.headers, "authorization") == Ok(expected)
+  assert get_header(out, "authorization") == Ok(expected)
 }
 
 fn get_header(
@@ -165,7 +165,7 @@ pub fn sign_put_round_trip_test() {
   let out_b = sigv4.sign_put(input)
   assert out_a == out_b
   // Ensure required headers are present.
-  let names = list_keys(out_a.headers)
+  let names = list_keys(out_a)
   assert list_contains(names, "authorization")
   assert list_contains(names, "host")
   assert list_contains(names, "x-amz-content-sha256")
@@ -189,7 +189,7 @@ pub fn sign_put_omits_content_type_when_absent_test() {
       content_length: 0,
     )
   let out = sigv4.sign_put(input)
-  let names = list_keys(out.headers)
+  let names = list_keys(out)
   assert !list_contains(names, "content-type")
   assert list_contains(names, "authorization")
 }

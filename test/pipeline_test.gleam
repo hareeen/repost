@@ -1,6 +1,9 @@
 //// Validation pipeline tests with a frozen clock.
 
 import gleam/bit_array
+import gleam/dict
+import gleam/list
+import gleam/string
 import repost/errors
 import repost/pipeline
 import repost/policy
@@ -20,6 +23,15 @@ const credential: String = "shim-app-key/20240115/auto/s3/aws4_request"
 
 // Frozen "now": well before the policy's expiration of 2025-01-01.
 const now: Int = 1_705_276_800
+
+fn build_field_map(values: List(#(String, String))) -> policy.FieldMap {
+  values
+  |> list.map(fn(pair) {
+    let #(key, value) = pair
+    #(string.lowercase(key), value)
+  })
+  |> dict.from_list
+}
 
 fn build_policy_b64(extra_conditions_json: String) -> String {
   let conds = case extra_conditions_json {
@@ -57,7 +69,7 @@ fn base_inputs(
   ]
   pipeline.Inputs(
     bucket: "my-bucket",
-    fields: policy.build_field_map(raw),
+    fields: build_field_map(raw),
     raw_values: raw,
     file_size:,
     now_seconds: now,
@@ -82,7 +94,7 @@ pub fn missing_required_field_returns_invalid_request_test() {
   let stripped =
     pipeline.Inputs(
       ..inputs,
-      fields: policy.build_field_map([
+      fields: build_field_map([
         #("policy", p),
         #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
         #("x-amz-credential", credential),
@@ -100,7 +112,7 @@ pub fn wrong_signature_test() {
   let bad =
     pipeline.Inputs(
       ..inputs,
-      fields: policy.build_field_map([
+      fields: build_field_map([
         #("key", "u/photo.png"),
         #("policy", p),
         #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
@@ -121,7 +133,7 @@ pub fn wrong_access_key_returns_signature_mismatch_test() {
   let mutated =
     pipeline.Inputs(
       ..inputs,
-      fields: policy.build_field_map([
+      fields: build_field_map([
         #("key", "u/photo.png"),
         #("policy", p),
         #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
@@ -151,7 +163,7 @@ pub fn condition_mismatch_returns_access_denied_test() {
   let bad =
     pipeline.Inputs(
       ..inputs,
-      fields: policy.build_field_map([
+      fields: build_field_map([
         #("key", "x/photo.png"),
         #("policy", p),
         #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
@@ -202,7 +214,7 @@ pub fn condition_check_runs_before_signature_per_spec_test() {
   let bad =
     pipeline.Inputs(
       ..inputs,
-      fields: policy.build_field_map([
+      fields: build_field_map([
         #("key", "x/photo.png"),
         #("policy", p),
         #("x-amz-algorithm", "AWS4-HMAC-SHA256"),

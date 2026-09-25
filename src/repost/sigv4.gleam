@@ -105,11 +105,7 @@ pub type PutSignInput {
   )
 }
 
-pub type PutSignOutput {
-  PutSignOutput(headers: List(#(String, String)))
-}
-
-pub fn sign_put(input: PutSignInput) -> PutSignOutput {
+pub fn sign_put(input: PutSignInput) -> List(#(String, String)) {
   let date = string.slice(input.amz_date, at_index: 0, length: 8)
   let credential_scope =
     date <> "/" <> input.region <> "/" <> input.service <> "/aws4_request"
@@ -163,7 +159,7 @@ pub fn sign_put(input: PutSignInput) -> PutSignOutput {
       #("authorization", authorization),
       #("content-length", int.to_string(input.content_length)),
     ])
-  PutSignOutput(headers: outgoing)
+  outgoing
 }
 
 fn header_compare(left: #(String, String), right: #(String, String)) -> Order {
