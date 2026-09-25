@@ -27,7 +27,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T0
   - Context: flakes only see git-tracked files, so `git add` new files before evaluating. `gleam format --check src test` will fail until T2; that is expected here.
 
-- [ ] T2: One-time reformat with the pinned formatter, as its own commit: `nix develop -c treefmt`. Then add that commit's hash to `.git-blame-ignore-revs` in a follow-up commit.
+- [x] T2: One-time reformat with the pinned formatter, as its own commit: `nix develop -c treefmt`. Then add that commit's hash to `.git-blame-ignore-revs` in a follow-up commit.
   - Files: `src/**/*.gleam`, `test/**/*.gleam`, `flake.nix`, `.git-blame-ignore-revs`
   - Depends on: T1
   - Context: formatting only. Confirm with `git diff --stat` that no Gleam file changes beyond whitespace/wrapping, and that the tests still pass.
