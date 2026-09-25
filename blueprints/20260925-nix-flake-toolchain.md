@@ -52,6 +52,18 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T5, T3
   - Context: keep the Dockerfile in this task. The workflow can only be proven by a CI run, which needs a push, and pushing is your call.
 
+- [ ] T6b: Multi-arch, leaner, labelled image (revision agreed after T6; the Mac now has a nix-darwin `linux-builder` for aarch64-linux).
+  - Runtime: build and run on `beam_minimal`'s Erlang 28 (both the same release), dropping wxwidgets/gettext/libtiff from the closure. The devShell keeps getting Erlang through `inputsFrom` the package. Report the closure size before and after.
+  - Multi-arch per `~/.claude/rules/dev-environment.md`: on each Linux system expose `repost-image-amd64`, `repost-image-arm64` and `repost-image` (an OCI index made with `regctl index create`, following the rule's `nix/oci-index.nix` template). The image matching the host is built natively; the other one uses `import inputs.nixpkgs { localSystem = system; crossSystem = …; }` and the same `nix/package.nix`/`nix/image.nix` (the BEAM shipment is architecture-independent, so only the runtime closure differs).
+  - Cross probe first: build `.#packages.aarch64-linux.repost-image-amd64` on the linux-builder. If cross-compiling Erlang fails, stop cross work and switch to the fallback: `docker.yml` builds each architecture natively in a matrix (`ubuntu-latest`, `ubuntu-24.04-arm`), pushes per-arch tags, then a final job merges them with `regctl index create`. Report which path was taken and why.
+  - Labels: `org.opencontainers.image.source` (the GitHub repo URL) and `org.opencontainers.image.revision` (`self.rev`, or `self.dirtyRev` when dirty).
+  - Linux check: `checks.<linux system>.launcher` runs the package's `bin/repost` with an empty environment and passes only if it exits non-zero naming `SHIM_ACCESS_KEY_ID`. Runs locally on the linux-builder and in CI through `nix flake check`.
+  - `docker.yml`: smoke test the amd64 image in Docker as today, then push the index to every metadata tag (`regctl image copy ocidir://…` or `copyTo` per arch plus index, whichever keeps the token out of logs). `ci.yml`'s shipment job uploads only `result/lib/repost`.
+  - README: multi-arch pull, and building locally through the linux-builder.
+  - Files: `nix/package.nix`, `nix/image.nix`, `nix/oci-index.nix`, `flake.nix`, `flake.lock`, `.github/workflows/docker.yml`, `.github/workflows/ci.yml`, `README.md`
+  - Depends on: T6
+  - Context: locally verifiable now: `nix build .#packages.aarch64-linux.repost-image-arm64`, the cross probe, `.#packages.aarch64-linux.repost-image`, and `nix build .#checks.aarch64-linux.launcher`. No Docker on this Mac, so the container smoke test and the x86_64-host builds are CI-only.
+
 - [ ] T7: Remove `Dockerfile` and `.dockerignore`. **Gate: run only after you confirm T6's workflow passed in CI.**
   - Files: `Dockerfile`, `.dockerignore`, `README.md`
   - Depends on: T6
