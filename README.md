@@ -1,5 +1,12 @@
 # repost
 
+> [!WARNING]
+> **Retired (September 2026).**
+> repost only handles browser POST uploads, but the apps that need it (Outline, Plane, Formbricks) send every S3 request to the same endpoint, including downloads and server-side reads and writes.
+> Behind repost those requests fail with `405`, so the app only half works.
+> Outline 1.9 and later can upload to R2 directly with `AWS_S3_UPLOAD_METHOD=put`; use that instead.
+> Supporting other apps would take a full S3 proxy that verifies and re-signs every request for R2, which is out of scope here.
+
 repost lets browser apps upload to Cloudflare R2 with S3 POST Object forms.
 
 R2 is S3-compatible, but it rejects POST Object uploads with `501 Not Implemented`.
