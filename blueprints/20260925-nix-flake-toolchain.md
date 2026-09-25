@@ -52,7 +52,7 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T5, T3
   - Context: keep the Dockerfile in this task. The workflow can only be proven by a CI run, which needs a push, and pushing is your call.
 
-- [ ] T6b: Multi-arch, leaner, labelled image (revision agreed after T6; the Mac now has a nix-darwin `linux-builder` for aarch64-linux).
+- [x] T6b: Multi-arch, leaner, labelled image (revision agreed after T6; the Mac now has a nix-darwin `linux-builder` for aarch64-linux).
   - Runtime: build and run on `beam_minimal`'s Erlang 28 (both the same release), dropping wxwidgets/gettext/libtiff from the closure. The devShell keeps getting Erlang through `inputsFrom` the package. Report the closure size before and after.
   - Multi-arch per `~/.claude/rules/dev-environment.md`: on each Linux system expose `repost-image-amd64`, `repost-image-arm64` and `repost-image` (an OCI index made with `regctl index create`, following the rule's `nix/oci-index.nix` template). The image matching the host is built natively; the other one uses `import inputs.nixpkgs { localSystem = system; crossSystem = …; }` and the same `nix/package.nix`/`nix/image.nix` (the BEAM shipment is architecture-independent, so only the runtime closure differs).
   - Cross probe first: build `.#packages.aarch64-linux.repost-image-amd64` on the linux-builder. If cross-compiling Erlang fails, stop cross work and switch to the fallback: `docker.yml` builds each architecture natively in a matrix (`ubuntu-latest`, `ubuntu-24.04-arm`), pushes per-arch tags, then a final job merges them with `regctl index create`. Report which path was taken and why.
