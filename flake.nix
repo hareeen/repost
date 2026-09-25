@@ -66,10 +66,8 @@
               enable = true;
               stages = [ "pre-push" ];
             };
-            # gleam build needs Hex deps already fetched into build/packages, which
-            # the pre-commit sandbox (used by `nix flake check`) has no network
-            # access to populate. Restrict this hook to the installed pre-push
-            # hook, where the working tree's existing build/ dir is available.
+            # gleam build needs Hex deps in build/packages, which the `nix flake check` sandbox cannot fetch.
+            # Only the installed pre-push hook runs it, against the working tree's existing build/.
             gleam-build = {
               enable = true;
               name = "gleam-build";
