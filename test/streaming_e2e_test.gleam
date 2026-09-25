@@ -7,6 +7,7 @@ import gleam/erlang/process
 import gleam/http
 import gleam/int
 import gleam/list
+import gleam/option.{Some}
 import gleam/string
 import mist
 
@@ -221,11 +222,40 @@ fn post_without_origin(
 }
 
 fn make_deps(r2_port: Int) -> upload.Deps {
+  make_deps_with_part_size(r2_port, 5 * 1024 * 1024)
+}
+
+fn make_deps_with_part_size(r2_port: Int, part_size: Int) -> upload.Deps {
   upload.Deps(
     config: test_config(),
     clock: fn() { now_seconds },
     endpoint: r2.Custom(scheme: http.Http, host: "127.0.0.1", port: r2_port),
+    part_size:,
   )
+}
+
+fn post_file(
+  port: Int,
+  payload: BitArray,
+  range: String,
+) -> #(Int, List(#(String, String)), BitArray) {
+  let p = build_policy_b64(range)
+  let body =
+    build_multipart_body(
+      [
+        #("key", "u/file.bin"),
+        #("Content-Type", "image/png"),
+        #("policy", p),
+        #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
+        #("x-amz-credential", credential),
+        #("x-amz-date", amz_date),
+        #("x-amz-signature", sign(p)),
+      ],
+      "file.bin",
+      "image/png",
+      payload,
+    )
+  post_chunked(port, "my-bucket", "https://outline.example.com", body, 41)
 }
 
 pub fn happy_path_chunked_request_chunked_to_r2_test() {
@@ -676,4 +706,168 @@ fn header_count(headers: List(#(String, String)), name: String) -> Int {
       }
     }
   }
+}
+
+pub fn smaller_than_part_uses_single_put_test() {
+  let #(capture, r2_port) = fake_r2.start()
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let payload = bit_array.from_string("short")
+  let #(status, headers, _) = post_file(shim, payload, "")
+  assert status == 204
+  assert list.key_find(headers, "etag") == Ok("\"e2e-streamed\"")
+  let assert Ok(request) = process.receive(capture, 2000)
+  assert request.method == http.Put
+  assert request.body == payload
+  assert process.receive(capture, 100) == Error(Nil)
+}
+
+pub fn exactly_one_part_uses_single_put_test() {
+  let #(capture, r2_port) = fake_r2.start()
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let payload = bit_array.from_string("0123456789abcdef")
+  let #(status, headers, _) = post_file(shim, payload, "")
+  assert status == 204
+  assert list.key_find(headers, "etag") == Ok("\"e2e-streamed\"")
+  let assert Ok(request) = process.receive(capture, 2000)
+  assert request.method == http.Put
+  assert request.body == payload
+  assert process.receive(capture, 100) == Error(Nil)
+}
+
+pub fn multipart_parts_are_ordered_and_byte_exact_test() {
+  let #(capture, r2_port) = fake_r2.start()
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let payload =
+    bit_array.from_string(
+      "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    )
+  let #(status, headers, _) = post_file(shim, payload, "")
+  assert status == 204
+  assert list.key_find(headers, "etag") == Ok("\"complete-etag\"")
+  let assert Ok(created) = process.receive(capture, 2000)
+  assert created.method == http.Post
+  let assert Ok(first) = process.receive(capture, 2000)
+  let assert Ok(second) = process.receive(capture, 2000)
+  let assert Ok(third) = process.receive(capture, 2000)
+  let assert Ok(tail) = process.receive(capture, 2000)
+  let assert Ok(completed) = process.receive(capture, 2000)
+  assert first.query == Some("partNumber=1&uploadId=fake-upload-id")
+  assert second.query == Some("partNumber=2&uploadId=fake-upload-id")
+  assert third.query == Some("partNumber=3&uploadId=fake-upload-id")
+  assert tail.query == Some("partNumber=4&uploadId=fake-upload-id")
+  assert bit_array.byte_size(first.body) == 16
+  assert bit_array.byte_size(second.body) == 16
+  assert bit_array.byte_size(third.body) == 16
+  assert bit_array.concat([first.body, second.body, third.body, tail.body])
+    == payload
+  assert completed.method == http.Post
+  assert process.receive(capture, 100) == Error(Nil)
+}
+
+pub fn upper_bound_after_create_aborts_test() {
+  let #(capture, r2_port) = fake_r2.start()
+  let shim = start_shim(make_deps_with_part_size(r2_port, 4096))
+  let payload = bit_array.from_string(string.repeat("x", 100_000))
+  let #(status, _, body) =
+    post_file(shim, payload, "[\"content-length-range\",1,75000]")
+  assert status == 400
+  let assert Ok(body_text) = bit_array.to_string(body)
+  assert string.contains(body_text, "<Code>EntityTooLarge</Code>")
+  let assert Ok(created) = process.receive(capture, 2000)
+  assert created.method == http.Post
+  let assert Ok(part) = process.receive(capture, 2000)
+  assert part.method == http.Put
+  assert receive_until_abort(capture, 20)
+}
+
+pub fn lower_bound_after_create_aborts_test() {
+  let #(capture, r2_port) = fake_r2.start()
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let payload = bit_array.from_string(repeat_string("x", 40))
+  let #(status, _, body) =
+    post_file(shim, payload, "[\"content-length-range\",50,100]")
+  assert status == 403
+  let assert Ok(body_text) = bit_array.to_string(body)
+  assert string.contains(body_text, "content-length-range")
+  let assert Ok(created) = process.receive(capture, 2000)
+  assert created.method == http.Post
+  let assert Ok(first) = process.receive(capture, 2000)
+  assert first.method == http.Put
+  let assert Ok(second) = process.receive(capture, 2000)
+  assert second.method == http.Put
+  let assert Ok(aborted) = process.receive(capture, 2000)
+  assert aborted.method == http.Delete
+}
+
+pub fn failed_upload_part_aborts_and_returns_502_test() {
+  let #(capture, r2_port) = fake_r2.start_with_failure(fake_r2.FailUploadPart)
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let #(status, _, body) =
+    post_file(shim, bit_array.from_string(repeat_string("x", 40)), "")
+  assert status == 502
+  let assert Ok(body_text) = bit_array.to_string(body)
+  assert string.contains(body_text, "R2 UploadPart failed")
+  let assert Ok(created) = process.receive(capture, 2000)
+  assert created.method == http.Post
+  let assert Ok(failed) = process.receive(capture, 2000)
+  assert failed.method == http.Put
+  let assert Ok(aborted) = process.receive(capture, 2000)
+  assert aborted.method == http.Delete
+}
+
+pub fn failed_complete_aborts_and_returns_502_test() {
+  let #(capture, r2_port) =
+    fake_r2.start_with_failure(fake_r2.CompleteEmbeddedError)
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let #(status, _, body) =
+    post_file(shim, bit_array.from_string(repeat_string("x", 40)), "")
+  assert status == 502
+  let assert Ok(body_text) = bit_array.to_string(body)
+  assert string.contains(
+    body_text,
+    "R2 CompleteMultipartUpload returned InternalError",
+  )
+  let assert Ok(_) = process.receive(capture, 2000)
+  let assert Ok(_) = process.receive(capture, 2000)
+  let assert Ok(_) = process.receive(capture, 2000)
+  let assert Ok(_) = process.receive(capture, 2000)
+  let assert Ok(complete) = process.receive(capture, 2000)
+  assert complete.method == http.Post
+  let assert Ok(aborted) = process.receive(capture, 2000)
+  assert aborted.method == http.Delete
+}
+
+fn receive_until_abort(
+  capture: process.Subject(fake_r2.Captured),
+  remaining: Int,
+) -> Bool {
+  case remaining {
+    0 -> False
+    _ ->
+      case process.receive(capture, 2000) {
+        Ok(request) if request.method == http.Delete -> True
+        Ok(_) -> receive_until_abort(capture, remaining - 1)
+        Error(_) -> False
+      }
+  }
+}
+
+pub fn abort_failure_preserves_original_error_and_adds_context_test() {
+  let #(capture, r2_port) =
+    fake_r2.start_with_failure(fake_r2.FailUploadPartAndAbort)
+  let shim = start_shim(make_deps_with_part_size(r2_port, 16))
+  let #(status, _, body) =
+    post_file(shim, bit_array.from_string(repeat_string("x", 40)), "")
+  assert status == 502
+  let assert Ok(body_text) = bit_array.to_string(body)
+  assert string.contains(
+    body_text,
+    "R2 UploadPart failed; abort of upload failed",
+  )
+  let assert Ok(created) = process.receive(capture, 2000)
+  assert created.method == http.Post
+  let assert Ok(failed) = process.receive(capture, 2000)
+  assert failed.method == http.Put
+  let assert Ok(aborted) = process.receive(capture, 2000)
+  assert aborted.method == http.Delete
 }

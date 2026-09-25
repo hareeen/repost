@@ -1,9 +1,8 @@
-//// Multipart event loop: collects text fields, validates, then buffers the file for R2.
+//// Multipart event loop: validates text fields, then streams file parts to R2.
 
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/int
-import gleam/list
 import gleam/string
 
 import repost/authorize
@@ -11,8 +10,8 @@ import repost/config.{type Config}
 import repost/errors.{type ErrorResponse}
 import repost/multipart
 import repost/r2
-import repost/r2/put_object
 import repost/time
+import repost/upload/sink
 
 const text_fields_cap: Int = 1_048_576
 
@@ -24,7 +23,7 @@ pub type Clock =
   fn() -> Int
 
 pub type Deps {
-  Deps(config: Config, clock: Clock, endpoint: r2.Endpoint)
+  Deps(config: Config, clock: Clock, endpoint: r2.Endpoint, part_size: Int)
 }
 
 pub type Uploaded {
@@ -36,6 +35,7 @@ pub fn default_deps(config: Config) -> Deps {
     config:,
     clock: fn() { time.now_seconds_utc() },
     endpoint: r2.R2Endpoint(account_id: config.r2_account_id),
+    part_size: 5 * 1024 * 1024,
   )
 }
 
@@ -62,7 +62,7 @@ type ProcessState {
   ReceivingFile(
     authorized: authorize.Authorized,
     bytes_seen: Int,
-    chunks: List(BitArray),
+    sink: sink.Sink,
   )
 }
 
@@ -73,7 +73,7 @@ fn loop(
   state: ProcessState,
 ) -> Result(Uploaded, ErrorResponse) {
   case multipart.next_event(parser) {
-    Error(parse_err) -> Error(parse_error(parse_err))
+    Error(parse_err) -> fail(state, parse_error(parse_err))
     Ok(#(event, next_parser)) ->
       handle_event(next_parser, deps, bucket, state, event)
   }
@@ -92,7 +92,7 @@ fn handle_event(
     multipart.PartChunk(bytes) ->
       handle_part_chunk(parser, deps, bucket, state, bytes)
     multipart.PartEnd -> handle_part_end(parser, deps, bucket, state)
-    multipart.MessageEnd -> finalize(deps, state)
+    multipart.MessageEnd -> finalize(state)
   }
 }
 
@@ -105,16 +105,33 @@ fn handle_part_start(
 ) -> Result(Uploaded, ErrorResponse) {
   case state, string.lowercase(name) == "file" {
     ReceivingFile(..), True ->
-      Error(errors.invalid_request("more than one `file` field"))
+      fail(state, errors.invalid_request("more than one `file` field"))
     ReceivingFile(..), False ->
-      Error(errors.invalid_request(
-        "multipart fields must precede the `file` part",
-      ))
+      fail(
+        state,
+        errors.invalid_request("multipart fields must precede the `file` part"),
+      )
     CollectingFields(fields:, ..), True ->
       case authorize.authorize(fields, bucket, deps.config, deps.clock()) {
         Error(err) -> Error(err)
         Ok(authorized) ->
-          loop(parser, deps, bucket, ReceivingFile(authorized, 0, []))
+          loop(
+            parser,
+            deps,
+            bucket,
+            ReceivingFile(
+              authorized,
+              0,
+              sink.new(
+                deps.endpoint,
+                deps.config,
+                authorized.key,
+                authorized.content_type,
+                deps.clock,
+                deps.part_size,
+              ),
+            ),
+          )
       }
     CollectingFields(fields:, bytes_used:, count:, ..), False -> {
       // Names are retained as dict keys, so they count against the cap.
@@ -147,19 +164,23 @@ fn handle_part_chunk(
   bytes: BitArray,
 ) -> Result(Uploaded, ErrorResponse) {
   case state {
-    ReceivingFile(authorized:, bytes_seen:, chunks:) -> {
+    ReceivingFile(authorized:, bytes_seen:, sink: upload_sink) -> {
       let new_total = bytes_seen + bit_array.byte_size(bytes)
       // Spec §10.2.3: abort the moment the cumulative byte count exceeds the bound.
       let upper = effective_upper_bound(deps, authorized)
       case new_total > upper {
-        True -> Error(errors.entity_too_large())
+        True -> Error(abort_error(upload_sink, errors.entity_too_large()))
         False ->
-          loop(
-            parser,
-            deps,
-            bucket,
-            ReceivingFile(authorized, new_total, [bytes, ..chunks]),
-          )
+          case sink.push(upload_sink, bytes) {
+            Error(#(failed_sink, err)) -> Error(abort_error(failed_sink, err))
+            Ok(next_sink) ->
+              loop(
+                parser,
+                deps,
+                bucket,
+                ReceivingFile(authorized, new_total, next_sink),
+              )
+          }
       }
     }
     CollectingFields(fields:, bytes_used:, count:, current:) ->
@@ -223,41 +244,36 @@ fn handle_part_end(
   }
 }
 
-fn finalize(
-  deps: Deps,
-  state: ProcessState,
-) -> Result(Uploaded, ErrorResponse) {
+fn finalize(state: ProcessState) -> Result(Uploaded, ErrorResponse) {
   case state {
     CollectingFields(..) ->
       Error(errors.invalid_request("missing `file` field"))
-    ReceivingFile(authorized:, bytes_seen:, chunks:) -> {
+    ReceivingFile(authorized:, bytes_seen:, sink: upload_sink) -> {
       case check_lower_bound(authorized, bytes_seen) {
-        Error(err) -> Error(err)
-        Ok(_) -> put_buffered_to_r2(deps, authorized, chunks)
+        Error(err) -> Error(abort_error(upload_sink, err))
+        Ok(_) ->
+          case sink.finish(upload_sink) {
+            Error(#(failed_sink, err)) -> Error(abort_error(failed_sink, err))
+            Ok(etag) -> Ok(Uploaded(etag))
+          }
       }
     }
   }
 }
 
-fn put_buffered_to_r2(
-  deps: Deps,
-  authorized: authorize.Authorized,
-  chunks: List(BitArray),
+fn fail(
+  state: ProcessState,
+  err: ErrorResponse,
 ) -> Result(Uploaded, ErrorResponse) {
-  let body = bit_array.concat(list.reverse(chunks))
-  case
-    put_object.put_buffered(
-      deps.endpoint,
-      deps.config,
-      authorized.key,
-      authorized.content_type,
-      deps.clock(),
-      body,
-    )
-  {
-    Error(err) -> Error(err)
-    Ok(resp) -> Ok(Uploaded(list.key_find(resp.headers, "etag")))
+  case state {
+    CollectingFields(..) -> Error(err)
+    ReceivingFile(sink: upload_sink, ..) -> Error(abort_error(upload_sink, err))
   }
+}
+
+fn abort_error(upload_sink: sink.Sink, err: ErrorResponse) -> ErrorResponse {
+  let #(_, response) = sink.abort(upload_sink, err)
+  response
 }
 
 fn effective_upper_bound(deps: Deps, authorized: authorize.Authorized) -> Int {

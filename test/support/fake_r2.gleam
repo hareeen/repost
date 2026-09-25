@@ -20,6 +20,7 @@ pub type Failure {
   NoFailure
   FailUploadPart
   CompleteEmbeddedError
+  FailUploadPartAndAbort
 }
 
 pub fn start() -> #(process.Subject(Captured), Int) {
@@ -73,7 +74,7 @@ fn reply(
       )
     http.Put, Some(_) ->
       case failure {
-        FailUploadPart ->
+        FailUploadPart | FailUploadPartAndAbort ->
           xml_reply(500, "<Error><Code>InternalError</Code></Error>")
         _ ->
           http_response.new(200)
@@ -90,7 +91,12 @@ fn reply(
             "<CompleteMultipartUploadResult><ETag>\"complete-etag\"</ETag></CompleteMultipartUploadResult>",
           )
       }
-    http.Delete, Some(_) -> xml_reply(204, "")
+    http.Delete, Some(_) ->
+      case failure {
+        FailUploadPartAndAbort ->
+          xml_reply(500, "<Error><Code>InternalError</Code></Error>")
+        _ -> xml_reply(204, "")
+      }
     http.Put, None ->
       http_response.new(200)
       |> http_response.set_header("etag", "\"e2e-streamed\"")
