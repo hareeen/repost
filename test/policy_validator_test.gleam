@@ -4,7 +4,7 @@ import gleam/dict
 import gleam/list
 import gleam/string
 import repost/policy
-import repost/validator
+import repost/policy/validator
 
 fn fields(pairs: List(#(String, String))) -> policy.FieldMap {
   pairs

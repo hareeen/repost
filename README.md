@@ -51,12 +51,12 @@ docker run --rm -p 4000:4000 \
 
 ## Module layout
 
-- `repost/streaming_handler` is the mist entry point: it routes the request, dispatches uploads to the pump, and forces `Connection: close` on every error so mid-stream aborts (spec §10.2.3) are observable on the wire.
-- `repost/streaming/pump` runs the multipart event loop, accumulates text fields, validates them against the POST policy, opens the R2 connection, and forwards file chunks one at a time.
-- `repost/multipart_stream` is an incremental multipart parser built on `gleam_http`'s continuations.
+- `repost/server` is the mist entry point: it routes the request, dispatches uploads to the upload loop, and forces `Connection: close` on every error so mid-stream aborts (spec §10.2.3) are observable on the wire.
+- `repost/upload` runs the multipart event loop, accumulates text fields, validates them against the POST policy, opens the R2 connection, and forwards file chunks one at a time.
+- `repost/multipart` is an incremental multipart parser built on `gleam_http`'s continuations.
 - `repost/r2_stream` (with the `repost_stream_ffi.erl` FFI) is a chunked HTTP/1.1 PUT client over `gen_tcp` / `ssl`.
 - `repost/sigv4` derives signing keys, verifies the browser's POST policy signature, and signs the outgoing PUT.
-- `repost/pipeline`, `repost/policy`, `repost/validator` cover the spec §7 + §10 validation pipeline.
+- `repost/authorize`, `repost/policy`, `repost/policy/validator` cover the spec §7 + §10 validation pipeline.
 - `repost/router` extracts the bucket from path-style or virtual-host requests.
 - `repost/cors` and `repost/errors` cover CORS allow-list logic and S3-style XML error responses.
 

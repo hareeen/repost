@@ -10,9 +10,9 @@ import gleam/string
 
 import repost/errors.{type ErrorResponse}
 import repost/policy.{type Condition, type FieldMap, type Policy}
+import repost/policy/validator
 import repost/sigv4
 import repost/time
-import repost/validator
 
 pub type Inputs {
   Inputs(

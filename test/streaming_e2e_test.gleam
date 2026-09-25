@@ -14,11 +14,11 @@ import gleam/string
 import mist
 
 import repost/config
+import repost/r2
 import repost/r2_stream
+import repost/server
 import repost/sigv4
-import repost/streaming/pump
-import repost/streaming/r2_put
-import repost/streaming_handler
+import repost/upload
 
 const shim_secret: String = "shim-secret-for-tests"
 
@@ -120,10 +120,10 @@ fn start_fake_r2() -> #(process.Subject(Captured), Int) {
   #(capture, port)
 }
 
-fn start_shim(deps: pump.Deps) -> Int {
+fn start_shim(deps: upload.Deps) -> Int {
   let port_subj = process.new_subject()
   let assert Ok(_) =
-    mist.new(streaming_handler.handle(_, deps))
+    mist.new(server.handle(_, deps))
     |> mist.bind("127.0.0.1")
     |> mist.port(0)
     |> mist.after_start(fn(p, _, _) { process.send(port_subj, p) })
@@ -298,11 +298,11 @@ fn send_in_chunks(conn: r2_stream.Conn, body: BitArray, chunk_size: Int) -> Nil 
   }
 }
 
-fn make_deps(r2_port: Int) -> pump.Deps {
-  pump.Deps(
+fn make_deps(r2_port: Int) -> upload.Deps {
+  upload.Deps(
     config: test_config(),
     clock: fn() { now_seconds },
-    endpoint: r2_put.Custom(scheme: http.Http, host: "127.0.0.1", port: r2_port),
+    endpoint: r2.Custom(scheme: http.Http, host: "127.0.0.1", port: r2_port),
   )
 }
 

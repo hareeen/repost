@@ -1,34 +1,28 @@
 //// Send a buffered PUT to R2 (or a custom endpoint in tests).
 
 import gleam/bit_array
-import gleam/http
-import gleam/int
 import gleam/list
 
 import repost/config.{type Config}
 import repost/errors.{type ErrorResponse}
+import repost/r2
 import repost/r2_stream
 import repost/sigv4
-import repost/streaming/uri
+import repost/sigv4/uri
 import repost/time
-
-pub type Endpoint {
-  R2Endpoint(account_id: String)
-  Custom(scheme: http.Scheme, host: String, port: Int)
-}
 
 const request_timeout_ms: Int = 60_000
 
 pub fn put_buffered(
-  endpoint: Endpoint,
+  endpoint: r2.Endpoint,
   config: Config,
   key: String,
   content_type: Result(String, Nil),
   amz_date_seconds: Int,
   body: BitArray,
 ) -> Result(r2_stream.Response, ErrorResponse) {
-  let #(scheme, host, port) = endpoint_parts(endpoint)
-  let host_header = host_header_for(host, port, scheme)
+  let #(scheme, host, port) = r2.endpoint_parts(endpoint)
+  let host_header = r2.host_header_for(host, port, scheme)
   let path = "/" <> config.r2_bucket <> "/" <> uri.encode_path(key)
   let amz_date = time.format_amz_date(amz_date_seconds)
   let content_length = bit_array.byte_size(body)
@@ -64,25 +58,6 @@ pub fn put_buffered(
   {
     Error(_) -> Error(errors.internal_error("R2 buffered PUT failed"))
     Ok(resp) -> Ok(resp)
-  }
-}
-
-fn endpoint_parts(endpoint: Endpoint) -> #(http.Scheme, String, Int) {
-  case endpoint {
-    R2Endpoint(account_id:) -> #(
-      http.Https,
-      account_id <> ".r2.cloudflarestorage.com",
-      443,
-    )
-    Custom(scheme:, host:, port:) -> #(scheme, host, port)
-  }
-}
-
-fn host_header_for(host: String, port: Int, scheme: http.Scheme) -> String {
-  case scheme, port {
-    http.Https, 443 -> host
-    http.Http, 80 -> host
-    _, _ -> host <> ":" <> int.to_string(port)
   }
 }
 

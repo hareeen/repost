@@ -4,8 +4,8 @@ import gleam/bit_array
 import gleam/dict
 import gleam/list
 import gleam/string
+import repost/authorize
 import repost/errors
-import repost/pipeline
 import repost/policy
 import repost/sigv4
 
@@ -56,7 +56,7 @@ fn base_inputs(
   policy_b64: String,
   extra: List(#(String, String)),
   file_size: Int,
-) -> pipeline.Inputs {
+) -> authorize.Inputs {
   let raw = [
     #("key", "u/photo.png"),
     #("policy", policy_b64),
@@ -67,7 +67,7 @@ fn base_inputs(
     #("file", ""),
     ..extra
   ]
-  pipeline.Inputs(
+  authorize.Inputs(
     bucket: "my-bucket",
     fields: build_field_map(raw),
     raw_values: raw,
@@ -83,7 +83,7 @@ fn base_inputs(
 pub fn happy_path_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
-  let assert Ok(validated) = pipeline.run(inputs)
+  let assert Ok(validated) = authorize.run(inputs)
   assert validated.bucket == "my-bucket"
   assert validated.key == "u/photo.png"
 }
@@ -92,7 +92,7 @@ pub fn missing_required_field_returns_invalid_request_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
   let stripped =
-    pipeline.Inputs(
+    authorize.Inputs(
       ..inputs,
       fields: build_field_map([
         #("policy", p),
@@ -102,7 +102,7 @@ pub fn missing_required_field_returns_invalid_request_test() {
         #("x-amz-signature", sign(p)),
       ]),
     )
-  let assert Error(err) = pipeline.run(stripped)
+  let assert Error(err) = authorize.run(stripped)
   assert errors.code(err.kind) == "InvalidRequest"
 }
 
@@ -110,7 +110,7 @@ pub fn wrong_signature_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
   let bad =
-    pipeline.Inputs(
+    authorize.Inputs(
       ..inputs,
       fields: build_field_map([
         #("key", "u/photo.png"),
@@ -122,7 +122,7 @@ pub fn wrong_signature_test() {
         #("file", ""),
       ]),
     )
-  let assert Error(err) = pipeline.run(bad)
+  let assert Error(err) = authorize.run(bad)
   assert errors.code(err.kind) == "SignatureDoesNotMatch"
 }
 
@@ -131,7 +131,7 @@ pub fn wrong_access_key_returns_signature_mismatch_test() {
   let inputs = base_inputs(p, [], 1024)
   let bad_cred = "wrong-key/20240115/auto/s3/aws4_request"
   let mutated =
-    pipeline.Inputs(
+    authorize.Inputs(
       ..inputs,
       fields: build_field_map([
         #("key", "u/photo.png"),
@@ -143,7 +143,7 @@ pub fn wrong_access_key_returns_signature_mismatch_test() {
         #("file", ""),
       ]),
     )
-  let assert Error(err) = pipeline.run(mutated)
+  let assert Error(err) = authorize.run(mutated)
   assert errors.code(err.kind) == "SignatureDoesNotMatch"
 }
 
@@ -151,8 +151,8 @@ pub fn expired_policy_returns_access_denied_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
   // Force "now" past the 2025-01-01 expiration.
-  let future = pipeline.Inputs(..inputs, now_seconds: 9_999_999_999)
-  let assert Error(err) = pipeline.run(future)
+  let future = authorize.Inputs(..inputs, now_seconds: 9_999_999_999)
+  let assert Error(err) = authorize.run(future)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
@@ -161,7 +161,7 @@ pub fn condition_mismatch_returns_access_denied_test() {
   let inputs = base_inputs(p, [], 1024)
   // Override `key` so the starts-with(u/) condition fails.
   let bad =
-    pipeline.Inputs(
+    authorize.Inputs(
       ..inputs,
       fields: build_field_map([
         #("key", "x/photo.png"),
@@ -173,36 +173,36 @@ pub fn condition_mismatch_returns_access_denied_test() {
         #("file", ""),
       ]),
     )
-  let assert Error(err) = pipeline.run(bad)
+  let assert Error(err) = authorize.run(bad)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
 pub fn bucket_mismatch_returns_access_denied_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
-  let mismatched = pipeline.Inputs(..inputs, bucket: "other-bucket")
-  let assert Error(err) = pipeline.run(mismatched)
+  let mismatched = authorize.Inputs(..inputs, bucket: "other-bucket")
+  let assert Error(err) = authorize.run(mismatched)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
 pub fn content_length_range_violation_test() {
   let p = build_policy_b64("[\"content-length-range\",100,200]")
   let inputs = base_inputs(p, [], 50)
-  let assert Error(err) = pipeline.run(inputs)
+  let assert Error(err) = authorize.run(inputs)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
 pub fn file_size_above_max_returns_entity_too_large_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 30_000_000)
-  let assert Error(err) = pipeline.run(inputs)
+  let assert Error(err) = authorize.run(inputs)
   assert errors.code(err.kind) == "EntityTooLarge"
 }
 
 pub fn uncovered_field_rejected_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [#("acl", "private")], 1024)
-  let assert Error(err) = pipeline.run(inputs)
+  let assert Error(err) = authorize.run(inputs)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
@@ -212,7 +212,7 @@ pub fn condition_check_runs_before_signature_per_spec_test() {
   let p = build_policy_b64("")
   let inputs = base_inputs(p, [], 1024)
   let bad =
-    pipeline.Inputs(
+    authorize.Inputs(
       ..inputs,
       fields: build_field_map([
         #("key", "x/photo.png"),
@@ -224,13 +224,13 @@ pub fn condition_check_runs_before_signature_per_spec_test() {
         #("file", ""),
       ]),
     )
-  let assert Error(err) = pipeline.run(bad)
+  let assert Error(err) = authorize.run(bad)
   assert errors.code(err.kind) == "AccessDenied"
 }
 
 pub fn covered_field_with_extra_eq_condition_test() {
   let p = build_policy_b64("{\"acl\":\"private\"}")
   let inputs = base_inputs(p, [#("acl", "private")], 1024)
-  assert pipeline.run(inputs) != Error(errors.invalid_request("anything"))
-  let assert Ok(_) = pipeline.run(inputs)
+  assert authorize.run(inputs) != Error(errors.invalid_request("anything"))
+  let assert Ok(_) = authorize.run(inputs)
 }

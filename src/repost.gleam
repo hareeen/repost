@@ -5,7 +5,8 @@ import gleam/io
 import mist
 
 import repost/config
-import repost/streaming_handler
+import repost/server
+import repost/upload
 
 pub fn main() -> Nil {
   case config.load() {
@@ -14,9 +15,9 @@ pub fn main() -> Nil {
       panic as "missing or invalid configuration"
     }
     Ok(cfg) -> {
-      let deps = streaming_handler.default_deps(cfg)
+      let deps = upload.default_deps(cfg)
       let assert Ok(_) =
-        mist.new(streaming_handler.handle(_, deps))
+        mist.new(server.handle(_, deps))
         |> mist.bind(cfg.bind_interface)
         |> mist.port(cfg.port)
         |> mist.start

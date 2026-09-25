@@ -1,5 +1,5 @@
 //// Top-level mist handler: routes the request, dispatches to the streaming
-//// pump for uploads, and forces `Connection: close` on every error so
+//// upload loop, and forces `Connection: close` on every error so
 //// mid-stream aborts (spec §10.2.3) are observable on the wire.
 
 import gleam/http
@@ -8,24 +8,19 @@ import gleam/http/response as http_response
 import gleam/string
 import mist
 
-import repost/config.{type Config}
 import repost/cors
 import repost/errors.{type ErrorResponse}
-import repost/multipart_stream as ms
+import repost/multipart
+import repost/multipart/boundary
 import repost/router
-import repost/streaming/boundary
-import repost/streaming/mist_response
-import repost/streaming/pump
-
-pub fn default_deps(config: Config) -> pump.Deps {
-  pump.default_deps(config)
-}
+import repost/server/response
+import repost/upload
 
 const stream_chunk_size: Int = 65_536
 
 pub fn handle(
   req: http_request.Request(mist.Connection),
-  deps: pump.Deps,
+  deps: upload.Deps,
 ) -> http_response.Response(mist.ResponseData) {
   let origin = http_request.get_header(req, "origin")
   let decision = cors.evaluate(origin, deps.config.allowed_origins)
@@ -38,7 +33,7 @@ pub fn handle(
     router.BucketRoute(bucket:, remainder:) if bucket == deps.config.r2_bucket ->
       handle_bucket(req, deps, decision, bucket, remainder)
     router.BucketRoute(..) | router.NoRoute ->
-      mist_response.xml_error(decision, errors.no_such_bucket())
+      response.xml_error(decision, errors.no_such_bucket())
   }
   apply_connection_header(response, response.status >= 400 || wants_close(req))
 }
@@ -62,7 +57,7 @@ fn apply_connection_header(
 
 fn handle_bucket(
   req: http_request.Request(mist.Connection),
-  deps: pump.Deps,
+  deps: upload.Deps,
   decision: cors.OriginDecision,
   bucket: String,
   remainder: List(String),
@@ -71,8 +66,8 @@ fn handle_bucket(
     http.Options, [] -> handle_preflight(decision)
     http.Post, [] -> handle_upload(req, deps, decision, bucket)
     http.Options, _ | http.Post, _ ->
-      mist_response.xml_error(decision, errors.no_such_bucket())
-    _, _ -> mist_response.xml_error(decision, errors.method_not_allowed())
+      response.xml_error(decision, errors.no_such_bucket())
+    _, _ -> response.xml_error(decision, errors.method_not_allowed())
   }
 }
 
@@ -81,42 +76,37 @@ fn handle_preflight(
 ) -> http_response.Response(mist.ResponseData) {
   case decision {
     cors.Allowed(o) ->
-      mist_response.empty(204)
-      |> mist_response.apply_headers(cors.preflight_headers(o))
+      response.empty(204)
+      |> response.apply_headers(cors.preflight_headers(o))
     cors.NoOrigin ->
-      mist_response.xml_error(decision, errors.access_denied("missing origin"))
+      response.xml_error(decision, errors.access_denied("missing origin"))
     cors.Denied ->
-      mist_response.xml_error(
-        decision,
-        errors.access_denied("origin not allowed"),
-      )
+      response.xml_error(decision, errors.access_denied("origin not allowed"))
   }
 }
 
 fn handle_upload(
   req: http_request.Request(mist.Connection),
-  deps: pump.Deps,
+  deps: upload.Deps,
   decision: cors.OriginDecision,
   bucket: String,
 ) -> http_response.Response(mist.ResponseData) {
   case decision {
     cors.Allowed(_) -> {
       case extract_boundary(req) {
-        Error(err) -> mist_response.xml_error(decision, err)
+        Error(err) -> response.xml_error(decision, err)
         Ok(b) ->
           case open_stream(req) {
-            Error(err) -> mist_response.xml_error(decision, err)
-            Ok(reader) -> pump.run(ms.new(reader, b), deps, decision, bucket)
+            Error(err) -> response.xml_error(decision, err)
+            Ok(reader) ->
+              upload.run(multipart.new(reader, b), deps, decision, bucket)
           }
       }
     }
     cors.NoOrigin ->
-      mist_response.xml_error(decision, errors.access_denied("missing origin"))
+      response.xml_error(decision, errors.access_denied("missing origin"))
     cors.Denied ->
-      mist_response.xml_error(
-        decision,
-        errors.access_denied("origin not allowed"),
-      )
+      response.xml_error(decision, errors.access_denied("origin not allowed"))
   }
 }
 
@@ -132,7 +122,7 @@ fn extract_boundary(
 
 fn open_stream(
   req: http_request.Request(mist.Connection),
-) -> Result(ms.Reader, ErrorResponse) {
+) -> Result(multipart.Reader, ErrorResponse) {
   case mist.stream(req) {
     Error(_) -> Error(errors.invalid_request("could not read request body"))
     Ok(stream) -> Ok(adapt_mist_stream(stream))
@@ -141,13 +131,13 @@ fn open_stream(
 
 fn adapt_mist_stream(
   stream: fn(Int) -> Result(mist.Chunk, mist.ReadError),
-) -> ms.Reader {
+) -> multipart.Reader {
   fn() {
     case stream(stream_chunk_size) {
-      Error(_) -> ms.ReaderError(detail: "transport read failed")
-      Ok(mist.Done) -> ms.ReaderEof
+      Error(_) -> multipart.ReaderError(detail: "transport read failed")
+      Ok(mist.Done) -> multipart.ReaderEof
       Ok(mist.Chunk(data:, consume:)) ->
-        ms.ReaderChunk(data:, next: adapt_mist_stream(consume))
+        multipart.ReaderChunk(data:, next: adapt_mist_stream(consume))
     }
   }
 }

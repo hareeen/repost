@@ -10,14 +10,15 @@ import gleam/result
 import gleam/string
 import mist
 
+import repost/authorize
 import repost/config.{type Config}
 import repost/cors
 import repost/errors.{type ErrorResponse}
-import repost/multipart_stream as ms
-import repost/pipeline
+import repost/multipart
 import repost/policy
-import repost/streaming/mist_response
-import repost/streaming/r2_put
+import repost/r2
+import repost/r2/put_object
+import repost/server/response
 import repost/time
 
 const text_fields_cap: Int = 1_048_576
@@ -30,19 +31,19 @@ pub type Clock =
   fn() -> Int
 
 pub type Deps {
-  Deps(config: Config, clock: Clock, endpoint: r2_put.Endpoint)
+  Deps(config: Config, clock: Clock, endpoint: r2.Endpoint)
 }
 
 pub fn default_deps(config: Config) -> Deps {
   Deps(
     config:,
     clock: fn() { time.now_seconds_utc() },
-    endpoint: r2_put.R2Endpoint(account_id: config.r2_account_id),
+    endpoint: r2.R2Endpoint(account_id: config.r2_account_id),
   )
 }
 
 pub fn run(
-  parser: ms.State,
+  parser: multipart.State,
   deps: Deps,
   decision: cors.OriginDecision,
   bucket: String,
@@ -98,30 +99,30 @@ type ProcessState {
 }
 
 fn loop(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
 ) -> http_response.Response(mist.ResponseData) {
-  case ms.next_event(parser) {
+  case multipart.next_event(parser) {
     Error(parse_err) -> handle_parse_error(state, parse_err)
     Ok(#(event, next_parser)) -> handle_event(next_parser, state, event)
   }
 }
 
 fn handle_event(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
-  event: ms.Event,
+  event: multipart.Event,
 ) -> http_response.Response(mist.ResponseData) {
   case event {
-    ms.PartStart(name:, ..) -> handle_part_start(parser, state, name)
-    ms.PartChunk(bytes) -> handle_part_chunk(parser, state, bytes)
-    ms.PartEnd -> handle_part_end(parser, state)
-    ms.MessageEnd -> finalize(state)
+    multipart.PartStart(name:, ..) -> handle_part_start(parser, state, name)
+    multipart.PartChunk(bytes) -> handle_part_chunk(parser, state, bytes)
+    multipart.PartEnd -> handle_part_end(parser, state)
+    multipart.MessageEnd -> finalize(state)
   }
 }
 
 fn handle_part_start(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
   name: String,
 ) -> http_response.Response(mist.ResponseData) {
@@ -132,7 +133,7 @@ fn handle_part_start(
       // socket isn't leaked.
       case state.r2 {
         R2Buffered(..) -> {
-          mist_response.xml_error(
+          response.xml_error(
             state.decision,
             errors.invalid_request(
               "multipart fields must precede the `file` part",
@@ -145,7 +146,7 @@ fn handle_part_start(
           let count = state.field_count + 1
           case used > text_fields_cap || count > max_text_fields {
             True ->
-              mist_response.xml_error(
+              response.xml_error(
                 state.decision,
                 errors.invalid_request("form fields exceeded soft cap"),
               )
@@ -166,7 +167,7 @@ fn handle_part_start(
 }
 
 fn handle_part_chunk(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
   bytes: BitArray,
 ) -> http_response.Response(mist.ResponseData) {
@@ -176,7 +177,7 @@ fn handle_part_chunk(
       let used = state.field_bytes_used + bit_array.byte_size(bytes)
       case used > text_fields_cap {
         True ->
-          mist_response.xml_error(
+          response.xml_error(
             state.decision,
             errors.invalid_request("form fields exceeded soft cap"),
           )
@@ -195,7 +196,7 @@ fn handle_part_chunk(
       }
     }
     NoCurrentField ->
-      mist_response.xml_error(
+      response.xml_error(
         state.decision,
         errors.invalid_request("malformed multipart"),
       )
@@ -203,14 +204,14 @@ fn handle_part_chunk(
 }
 
 fn handle_part_end(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
 ) -> http_response.Response(mist.ResponseData) {
   case state.current_field {
     CollectingTextField(name:, accumulated:) ->
       case bit_array.to_string(accumulated) {
         Error(_) ->
-          mist_response.xml_error(
+          response.xml_error(
             state.decision,
             errors.invalid_request("non-UTF8 form field: " <> name),
           )
@@ -231,20 +232,20 @@ fn handle_part_end(
 }
 
 fn begin_file_part(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
   field_name: String,
 ) -> http_response.Response(mist.ResponseData) {
   case state.r2 {
     R2Buffered(..) -> {
-      mist_response.xml_error(
+      response.xml_error(
         state.decision,
         errors.invalid_request("more than one `file` field"),
       )
     }
     NoR2 ->
       case validate_pre_file(state) {
-        Error(err) -> mist_response.xml_error(state.decision, err)
+        Error(err) -> response.xml_error(state.decision, err)
         Ok(#(policy_doc, key, content_type)) ->
           loop(
             parser,
@@ -260,13 +261,13 @@ fn begin_file_part(
 }
 
 fn stream_to_r2(
-  parser: ms.State,
+  parser: multipart.State,
   state: ProcessState,
   bytes: BitArray,
 ) -> http_response.Response(mist.ResponseData) {
   case state.r2 {
     NoR2 ->
-      mist_response.xml_error(
+      response.xml_error(
         state.decision,
         errors.shim_error("stream-to-r2 without conn"),
       )
@@ -276,8 +277,7 @@ fn stream_to_r2(
       // the bound.
       let upper = effective_upper_bound(state)
       case new_total > upper {
-        True ->
-          mist_response.xml_error(state.decision, errors.entity_too_large())
+        True -> response.xml_error(state.decision, errors.entity_too_large())
         False ->
           loop(
             parser,
@@ -294,13 +294,13 @@ fn stream_to_r2(
 fn finalize(state: ProcessState) -> http_response.Response(mist.ResponseData) {
   case state.r2 {
     NoR2 ->
-      mist_response.xml_error(
+      response.xml_error(
         state.decision,
         errors.invalid_request("missing `file` field"),
       )
     R2Buffered(key:, content_type:) ->
       case check_lower_bound(state) {
-        Error(err) -> mist_response.xml_error(state.decision, err)
+        Error(err) -> response.xml_error(state.decision, err)
         Ok(_) -> put_buffered_to_r2(state, key, content_type)
       }
   }
@@ -313,7 +313,7 @@ fn put_buffered_to_r2(
 ) -> http_response.Response(mist.ResponseData) {
   let body = bit_array.concat(list.reverse(state.file_chunks))
   case
-    r2_put.put_buffered(
+    put_object.put_buffered(
       state.deps.endpoint,
       state.deps.config,
       key,
@@ -322,16 +322,13 @@ fn put_buffered_to_r2(
       body,
     )
   {
-    Error(err) -> mist_response.xml_error(state.decision, err)
+    Error(err) -> response.xml_error(state.decision, err)
     Ok(resp) ->
       case resp.status >= 200 && resp.status < 300 {
         True ->
-          mist_response.success(
-            state.decision,
-            list.key_find(resp.headers, "etag"),
-          )
+          response.success(state.decision, list.key_find(resp.headers, "etag"))
         False ->
-          mist_response.xml_error(
+          response.xml_error(
             state.decision,
             errors.internal_error(
               "R2 returned status " <> int.to_string(resp.status),
@@ -345,25 +342,25 @@ fn validate_pre_file(
   state: ProcessState,
 ) -> Result(#(policy.Policy, String, Result(String, Nil)), ErrorResponse) {
   let lowered = lowercase_keys(state.fields)
-  use _ <- result.try(pipeline.check_required(lowered))
-  use credential <- result.try(pipeline.check_credential(
+  use _ <- result.try(authorize.check_required(lowered))
+  use credential <- result.try(authorize.check_credential(
     lowered,
     state.deps.config.shim_access_key_id,
     state.deps.config.shim_region,
   ))
-  use policy_doc <- result.try(pipeline.check_policy(lowered))
-  use _ <- result.try(pipeline.check_expiration(policy_doc, state.deps.clock()))
+  use policy_doc <- result.try(authorize.check_policy(lowered))
+  use _ <- result.try(authorize.check_expiration(policy_doc, state.deps.clock()))
   use _ <- result.try(check_conditions_pre_size(
     lowered,
     state.bucket,
     policy_doc,
   ))
-  use _ <- result.try(pipeline.check_signature(
+  use _ <- result.try(authorize.check_signature(
     lowered,
     credential,
     state.deps.config.shim_secret_access_key,
   ))
-  use key <- result.try(pipeline.check_key(lowered))
+  use key <- result.try(authorize.check_key(lowered))
 
   let content_type = dict.get(lowered, "content-type")
   Ok(#(policy_doc, key, content_type))
@@ -383,7 +380,7 @@ fn check_conditions_pre_size(
       ..policy_doc,
       conditions: without_length_conditions(policy_doc.conditions),
     )
-  pipeline.check_conditions(with_file, bucket, 0, pre_size_policy)
+  authorize.check_conditions(with_file, bucket, 0, pre_size_policy)
 }
 
 fn without_length_conditions(
@@ -402,9 +399,9 @@ fn effective_upper_bound(state: ProcessState) -> Int {
   case state.policy_doc {
     NoPolicy -> cfg_max
     HasPolicy(p) ->
-      case pipeline.length_bounds(p) {
-        pipeline.LengthBounds(min: _, max:) -> int.min(max, cfg_max)
-        pipeline.NoLengthBounds -> cfg_max
+      case authorize.length_bounds(p) {
+        authorize.LengthBounds(min: _, max:) -> int.min(max, cfg_max)
+        authorize.NoLengthBounds -> cfg_max
       }
   }
 }
@@ -413,8 +410,8 @@ fn check_lower_bound(state: ProcessState) -> Result(Nil, ErrorResponse) {
   case state.policy_doc {
     NoPolicy -> Ok(Nil)
     HasPolicy(p) ->
-      case pipeline.length_bounds(p) {
-        pipeline.LengthBounds(min:, max: _) ->
+      case authorize.length_bounds(p) {
+        authorize.LengthBounds(min:, max: _) ->
           case state.file_bytes_seen >= min {
             True -> Ok(Nil)
             False ->
@@ -422,33 +419,33 @@ fn check_lower_bound(state: ProcessState) -> Result(Nil, ErrorResponse) {
                 "file size outside content-length-range",
               ))
           }
-        pipeline.NoLengthBounds -> Ok(Nil)
+        authorize.NoLengthBounds -> Ok(Nil)
       }
   }
 }
 
 fn handle_parse_error(
   state: ProcessState,
-  err: ms.ParseError,
+  err: multipart.ParseError,
 ) -> http_response.Response(mist.ResponseData) {
   case err {
-    ms.HeaderLimitExceeded ->
-      mist_response.xml_error(
+    multipart.HeaderLimitExceeded ->
+      response.xml_error(
         state.decision,
         errors.invalid_request("part header too large"),
       )
-    ms.ReadError(detail: _) ->
-      mist_response.xml_error(
+    multipart.ReadError(detail: _) ->
+      response.xml_error(
         state.decision,
         errors.invalid_request("transport read failed"),
       )
-    ms.AfterMessageEnd ->
-      mist_response.xml_error(
+    multipart.AfterMessageEnd ->
+      response.xml_error(
         state.decision,
         errors.shim_error("parse stage corruption"),
       )
     _ ->
-      mist_response.xml_error(
+      response.xml_error(
         state.decision,
         errors.invalid_request("malformed multipart"),
       )
