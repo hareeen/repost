@@ -33,24 +33,16 @@ pub fn format_amz_date(seconds: Int) -> String {
   let #(date, time) = timestamp.to_calendar(ts, duration.seconds(0))
   let calendar.Date(year:, month:, day:) = date
   let calendar.TimeOfDay(hours:, minutes:, seconds:, ..) = time
-  pad4(year)
-  <> pad2(calendar.month_to_int(month))
-  <> pad2(day)
+  pad(year, 4)
+  <> pad(calendar.month_to_int(month), 2)
+  <> pad(day, 2)
   <> "T"
-  <> pad2(hours)
-  <> pad2(minutes)
-  <> pad2(seconds)
+  <> pad(hours, 2)
+  <> pad(minutes, 2)
+  <> pad(seconds, 2)
   <> "Z"
 }
 
-fn pad2(n: Int) -> String {
-  case n < 10 {
-    True -> "0" <> int.to_string(n)
-    False -> int.to_string(n)
-  }
-}
-
-fn pad4(n: Int) -> String {
-  let s = int.to_string(n)
-  string.pad_start(s, 4, "0")
+fn pad(n: Int, width: Int) -> String {
+  string.pad_start(int.to_string(n), to: width, with: "0")
 }

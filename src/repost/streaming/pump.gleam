@@ -311,7 +311,7 @@ fn put_buffered_to_r2(
   key: String,
   content_type: Result(String, Nil),
 ) -> http_response.Response(mist.ResponseData) {
-  let body = concat_chunks(list.reverse(state.file_chunks), <<>>)
+  let body = bit_array.concat(list.reverse(state.file_chunks))
   case
     r2_put.put_buffered(
       state.deps.endpoint,
@@ -338,13 +338,6 @@ fn put_buffered_to_r2(
             ),
           )
       }
-  }
-}
-
-fn concat_chunks(chunks: List(BitArray), acc: BitArray) -> BitArray {
-  case chunks {
-    [] -> acc
-    [chunk, ..rest] -> concat_chunks(rest, bit_array.append(acc, chunk))
   }
 }
 
@@ -410,7 +403,7 @@ fn effective_upper_bound(state: ProcessState) -> Int {
     NoPolicy -> cfg_max
     HasPolicy(p) ->
       case pipeline.length_bounds(p) {
-        pipeline.LengthBounds(min: _, max:) -> int_min(max, cfg_max)
+        pipeline.LengthBounds(min: _, max:) -> int.min(max, cfg_max)
         pipeline.NoLengthBounds -> cfg_max
       }
   }
@@ -467,11 +460,4 @@ fn lowercase_keys(d: Dict(String, String)) -> Dict(String, String) {
   |> dict.to_list
   |> list.map(fn(p) { #(string.lowercase(p.0), p.1) })
   |> dict.from_list
-}
-
-fn int_min(a: Int, b: Int) -> Int {
-  case a < b {
-    True -> a
-    False -> b
-  }
 }

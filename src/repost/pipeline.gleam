@@ -3,6 +3,7 @@
 //// can enforce some checks before the file body has been read.
 
 import gleam/dict
+import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
@@ -241,24 +242,10 @@ pub fn length_bounds(policy_doc: Policy) -> LengthBounds {
         LengthBounds(min:, max:)
       policy.ContentLengthRange(min:, max:),
         LengthBounds(min: old_min, max: old_max)
-      -> LengthBounds(min: int_max(old_min, min), max: int_min(old_max, max))
+      -> LengthBounds(min: int.max(old_min, min), max: int.min(old_max, max))
       _, _ -> bounds
     }
   })
-}
-
-fn int_min(a: Int, b: Int) -> Int {
-  case a < b {
-    True -> a
-    False -> b
-  }
-}
-
-fn int_max(a: Int, b: Int) -> Int {
-  case a > b {
-    True -> a
-    False -> b
-  }
 }
 
 fn required_field(fields: FieldMap, name: String) -> String {

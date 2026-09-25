@@ -72,20 +72,7 @@ fn decode_top(value: Dynamic) -> Result(Policy, DecodeFailure) {
 fn decode_conditions(
   raw: List(Dynamic),
 ) -> Result(List(Condition), DecodeFailure) {
-  do_decode_conditions(raw, [])
-}
-
-fn do_decode_conditions(
-  raw: List(Dynamic),
-  acc: List(Condition),
-) -> Result(List(Condition), DecodeFailure) {
-  case raw {
-    [] -> Ok(list.reverse(acc))
-    [head, ..rest] -> {
-      use c <- result.try(decode_condition(head))
-      do_decode_conditions(rest, [c, ..acc])
-    }
-  }
+  list.try_map(raw, decode_condition)
 }
 
 fn decode_condition(value: Dynamic) -> Result(Condition, DecodeFailure) {

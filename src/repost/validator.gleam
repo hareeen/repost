@@ -4,6 +4,7 @@
 
 import gleam/dict
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/set
 import gleam/string
 
@@ -55,16 +56,11 @@ fn check_conditions(
   }
 }
 
-type MaybeField {
-  Some(String)
-  None
-}
-
 fn evaluate(
   condition: Condition,
   form_fields: FieldMap,
   file_size: Int,
-) -> Result(MaybeField, ValidationError) {
+) -> Result(Option(String), ValidationError) {
   case condition {
     Eq(field:, value:) -> {
       let key = string.lowercase(field)
