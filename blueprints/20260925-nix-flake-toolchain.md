@@ -1,6 +1,6 @@
 # Pin the toolchain and build the release image with a Nix flake
 
-Base: 50bd7284fe5a3b255291827aac94dce08bf3d0a0
+Base: edb287263e5353249bf14518c731a043be4671af
 
 Objective: one flake defines the Gleam/Erlang toolchain for the devShell, the git hooks, CI and the release image, so local and CI formatting can no longer disagree, and the image comes from a hermetic Nix build instead of the Dockerfile.
 
