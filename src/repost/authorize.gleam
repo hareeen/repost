@@ -162,8 +162,6 @@ fn check_conditions(
   file_size: Int,
   policy_doc: Policy,
 ) -> Result(Nil, ErrorResponse) {
-  use _ <- result.try(check_bucket_condition(policy_doc.conditions, bucket))
-
   let with_bucket = dict.insert(fields, "bucket", bucket)
   case validator.validate(policy_doc.conditions, with_bucket, file_size) {
     Ok(Nil) -> Ok(Nil)
@@ -173,28 +171,6 @@ fn check_conditions(
       Error(errors.access_denied("form field not covered by policy: " <> field))
     Error(validator.LengthOutOfRange) ->
       Error(errors.access_denied("file size outside content-length-range"))
-  }
-}
-
-fn check_bucket_condition(
-  conditions: List(Condition),
-  bucket: String,
-) -> Result(Nil, ErrorResponse) {
-  case
-    list.find(conditions, fn(c) {
-      case c {
-        policy.Eq(field:, value: _) -> field == "bucket"
-        _ -> False
-      }
-    })
-  {
-    Error(_) -> Ok(Nil)
-    Ok(policy.Eq(field: _, value:)) ->
-      case value == bucket {
-        True -> Ok(Nil)
-        False -> Error(errors.access_denied("policy bucket mismatch"))
-      }
-    Ok(_) -> Ok(Nil)
   }
 }
 

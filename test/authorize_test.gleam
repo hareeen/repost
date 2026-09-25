@@ -4,6 +4,7 @@ import repost/authorize
 import repost/config
 import repost/errors
 import repost/policy
+import repost/policy/validator
 import repost/sigv4
 
 const shim_secret: String = "test-shim-secret"
@@ -127,11 +128,20 @@ pub fn condition_mismatch_returns_access_denied_test() {
 }
 
 pub fn bucket_mismatch_returns_access_denied_test() {
-  let fields = base_fields(build_policy_b64(""), [])
-  let assert Error(err) =
-    authorize.authorize(fields, "other-bucket", test_config(), now)
+  let json =
+    "{\"expiration\":\"2025-01-01T00:00:00Z\",\"conditions\":["
+    <> "{\"bucket\":\"other\"},[\"starts-with\",\"$key\",\"u/\"]]}"
+  let policy_b64 = bit_array.base64_encode(bit_array.from_string(json), True)
+  let fields = base_fields(policy_b64, [])
+  let assert Error(err) = authorize_fields(fields)
+  assert err.message == "policy condition failed for field: bucket"
   assert errors.code(err.kind) == "AccessDenied"
-  assert err.message == "policy bucket mismatch"
+}
+
+pub fn validator_rejects_other_bucket_condition_test() {
+  let fields = dict.from_list([#("bucket", "my-bucket")])
+  let assert Error(validator.ConditionMismatch(field: "bucket")) =
+    validator.validate([policy.Eq("bucket", "other")], fields, 0)
 }
 
 pub fn content_length_range_bounds_test() {
