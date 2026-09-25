@@ -1,0 +1,2 @@
+# One-time reformat with the pinned gleam formatter (nix develop -c treefmt).
+46a760fb890d269fa3e7e7c3a5a7a681d6f2d0b3
