@@ -15,6 +15,10 @@
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nix2container = {
+      url = "github:nlewo/nix2container";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -34,12 +38,23 @@
       perSystem =
         {
           config,
+          lib,
           pkgs,
           self',
+          system,
           ...
         }:
         {
-          packages.default = pkgs.callPackage ./nix/package.nix { source = ./.; };
+          packages = {
+            default = pkgs.callPackage ./nix/package.nix { source = ./.; };
+          }
+          # Images are Linux artifacts; Darwin systems get no image output rather than a broken one.
+          // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            repost-image = pkgs.callPackage ./nix/image.nix {
+              inherit (inputs.nix2container.packages.${system}) nix2container;
+              package = self'.packages.default;
+            };
+          };
 
           treefmt = {
             projectRootFile = "flake.nix";
