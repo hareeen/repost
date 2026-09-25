@@ -16,3 +16,8 @@ erl_crash.dump
 # Local environment overrides
 .env
 .env.local
+
+# Nix
+.direnv/
+result*
+.pre-commit-config.yaml
