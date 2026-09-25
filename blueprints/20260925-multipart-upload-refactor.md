@@ -48,7 +48,7 @@ Key assumptions:
   - Depends on: T5
   - Context: the step order must stay: required, key, credential, policy, expiration, conditions without length, signature.
 
-- [ ] T7: Remove the redundant `check_bucket_condition` (#6); the validator already checks the `bucket` Eq condition through the injected field. Update any test asserting the old message.
+- [x] T7: Remove the redundant `check_bucket_condition` (#6); the validator already checks the `bucket` Eq condition through the injected field. Update any test asserting the old message.
   - Files: `src/repost/authorize.gleam`, `test/authorize_test.gleam`
   - Depends on: T6
   - Context: behavior change, message only (`policy condition failed for field: bucket`); separate commit on purpose.
