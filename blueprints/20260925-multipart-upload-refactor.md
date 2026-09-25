@@ -76,7 +76,7 @@ Key assumptions:
   - Files: `README.md`, `spec.md`, `test/streaming_e2e_test.gleam`
   - Depends on: T11
 
-- [ ] T13: Acceptance. Re-count touchpoints: adding one R2 operation should need 1 new file under `r2/` + its caller (was 3 sites); adding one validation step should need 2 sites in `authorize.gleam` (was 3). Zero-caller sweep over every `pub fn`/`pub type` in `src` (grep each name; flag any with no caller outside its own file and tests). Confirm there is no `.erl` under `src/`, no `hackney` in `gleam.toml`/`manifest.toml`, and no `src/repost/streaming/`. Run `gleam export erlang-shipment`. Report the numbers against the diagnosis.
+- [x] T13: Acceptance. Re-count touchpoints: adding one R2 operation should need 1 new file under `r2/` + its caller (was 3 sites); adding one validation step should need 2 sites in `authorize.gleam` (was 3). Zero-caller sweep over every `pub fn`/`pub type` in `src` (grep each name; flag any with no caller outside its own file and tests). Confirm there is no `.erl` under `src/`, no `hackney` in `gleam.toml`/`manifest.toml`, and no `src/repost/streaming/`. Run `gleam export erlang-shipment`. Report the numbers against the diagnosis.
   - Depends on: T12
 
 ## Verification
