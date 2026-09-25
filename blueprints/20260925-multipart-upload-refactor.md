@@ -33,7 +33,7 @@ Key assumptions:
   - Depends on: T2
   - Context: use `git mv` so history follows. Dependencies point only downward: `server → upload → {authorize, r2} → sigv4`. The `streaming/` directory must be empty and removed at the end. Run this task alone; it touches every file.
 
-- [ ] T4: Move the fake-browser chunked client into test support (#2, part 1). Add `test/support/raw_client.erl` (plain `gen_tcp`, sends headers, then body chunks, then reads the response; tolerates an early server hang-up) with a Gleam wrapper `test/support/raw_client.gleam`. Move the fake R2 server out of the e2e test into `test/support/fake_r2.gleam`. Switch all e2e callers, then delete `r2_stream.start/send_chunk/finish/close`, `StartError`, `SendError` and the matching FFI exports.
+- [x] T4: Move the fake-browser chunked client into test support (#2, part 1). Add `test/support/raw_client.erl` (plain `gen_tcp`, sends headers, then body chunks, then reads the response; tolerates an early server hang-up) with a Gleam wrapper `test/support/raw_client.gleam`. Move the fake R2 server out of the e2e test into `test/support/fake_r2.gleam`. Switch all e2e callers, then delete `r2_stream.start/send_chunk/finish/close`, `StartError`, `SendError` and the matching FFI exports.
   - Files: `test/support/raw_client.erl`, `test/support/raw_client.gleam`, `test/support/fake_r2.gleam`, `test/streaming_e2e_test.gleam`, `src/repost/r2_stream.gleam`, `src/repost_stream_ffi.erl`
   - Depends on: T3
   - Context: the client sends `Transfer-Encoding: chunked` itself (hex size line + CRLF per chunk, `0\r\n\r\n` terminator); the tests rely on small transport chunks crossing part boundaries.
