@@ -28,7 +28,7 @@ Key assumptions:
   - Depends on: T1
   - Context: skip `r2_stream.encode/decode_headers`; that file is deleted in T5.
 
-- [ ] T3: Module moves (#7), pure renames with no logic change. `streaming_handler` → `server`; `streaming/mist_response` → `server/response`; `multipart_stream` → `multipart`; `streaming/boundary` → `multipart/boundary`; `validator` → `policy/validator`; `pipeline` → `authorize`; `streaming/uri` → `sigv4/uri`; `streaming/pump` → `upload`; `streaming/r2_put` → `r2/put_object` (with `Endpoint` and the shared signed-request helper in `r2.gleam`). Delete the pass-through `streaming_handler.default_deps`; `repost.gleam` calls `upload.default_deps`. Rename test files to match.
+- [x] T3: Module moves (#7), pure renames with no logic change. `streaming_handler` → `server`; `streaming/mist_response` → `server/response`; `multipart_stream` → `multipart`; `streaming/boundary` → `multipart/boundary`; `validator` → `policy/validator`; `pipeline` → `authorize`; `streaming/uri` → `sigv4/uri`; `streaming/pump` → `upload`; `streaming/r2_put` → `r2/put_object` (with `Endpoint` and the shared signed-request helper in `r2.gleam`). Delete the pass-through `streaming_handler.default_deps`; `repost.gleam` calls `upload.default_deps`. Rename test files to match.
   - Files: all of `src/repost/**`, `src/repost.gleam`, `test/*.gleam`
   - Depends on: T2
   - Context: use `git mv` so history follows. Dependencies point only downward: `server → upload → {authorize, r2} → sigv4`. The `streaming/` directory must be empty and removed at the end. Run this task alone; it touches every file.
