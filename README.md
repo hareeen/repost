@@ -23,17 +23,25 @@ Each upload holds about one 5 MiB part plus one 64 KiB network chunk in memory, 
 
 ## Quick start
 
-With Docker, pull the published image:
+With Docker, pull the published image.
+It is a multi-arch image for `linux/amd64` and `linux/arm64`, so Docker picks the one matching your machine:
 
 ```sh
 docker pull ghcr.io/hareeen/repost:main
 ```
 
-Or, on Linux with Nix, build the image and load it into Docker as `repost:latest`:
+Or, on Linux with Nix, build the image for your architecture (`amd64` or `arm64`) and load it into Docker as `repost:latest`:
 
 ```sh
-nix build .#repost-image
-nix run .#repost-image.copyTo -- docker-daemon:repost:latest
+nix build .#repost-image-amd64
+nix run .#repost-image-amd64.copyTo -- docker-daemon:repost:latest
+```
+
+Each Linux system builds only its own architecture's image, because nixpkgs cannot cross-compile Erlang.
+On macOS, build through a Linux builder such as nix-darwin's `nix.linux-builder`, naming the system explicitly:
+
+```sh
+nix build .#packages.aarch64-linux.repost-image-arm64
 ```
 
 Then run it, naming `ghcr.io/hareeen/repost:main` instead of `repost` if you pulled it:
