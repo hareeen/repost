@@ -63,7 +63,7 @@ Key assumptions:
   - Depends on: T5
   - Context: fixtures copied from AWS's documented `InitiateMultipartUploadResult`, `CompleteMultipartUploadResult`, and 200-with-`<Error>` responses.
 
-- [ ] T10: Multipart operations. `r2/multipart_upload.gleam`: `create(…) -> Result(UploadId, R2Error)` (`POST ?uploads`), `upload_part(…, id, number, body) -> Result(PartEtag, R2Error)` (`PUT ?partNumber=&uploadId=`, `x-amz-content-sha256` = the part's hash), `complete(…, id, parts)` (`POST ?uploadId=`, XML body, treat an `<Error>` body as failure even on 200, return the final ETag), `abort(…, id)` (`DELETE ?uploadId=`). `UploadId`/`PartNumber` are opaque domain types. Extend `test/support/fake_r2.gleam` to serve all four and record calls.
+- [x] T10: Multipart operations. `r2/multipart_upload.gleam`: `create(…) -> Result(UploadId, R2Error)` (`POST ?uploads`), `upload_part(…, id, number, body) -> Result(PartEtag, R2Error)` (`PUT ?partNumber=&uploadId=`, `x-amz-content-sha256` = the part's hash), `complete(…, id, parts)` (`POST ?uploadId=`, XML body, treat an `<Error>` body as failure even on 200, return the final ETag), `abort(…, id)` (`DELETE ?uploadId=`). `UploadId`/`PartNumber` are opaque domain types. Extend `test/support/fake_r2.gleam` to serve all four and record calls.
   - Files: `src/repost/r2/multipart_upload.gleam`, `test/support/fake_r2.gleam`, `test/r2_multipart_upload_test.gleam`
   - Depends on: T9
 
