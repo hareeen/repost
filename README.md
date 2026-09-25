@@ -1,40 +1,29 @@
 # repost
 
-A streaming HTTP shim that translates browser-issued S3 POST Object uploads into SigV4-signed requests against Cloudflare R2.
-The full protocol spec lives in [`spec.md`](spec.md).
+repost lets browser apps upload to Cloudflare R2 with S3 POST Object forms.
 
-Built in Gleam on BEAM/OTP.
-File bytes flow from the browser through `mist.stream` and the multipart parser to R2 through `gleam_httpc`, without a disk hop.
-Each in-flight upload buffers roughly one 5 MiB part plus one transport chunk; bytes cut from a joined buffer can briefly keep up to about twice the part size (about 10 MiB by default) alive between flushes.
+R2 is S3-compatible, but it rejects POST Object uploads with `501 Not Implemented`.
+Apps such as Outline rely on that flow, so they cannot use R2 as-is.
+repost sits in front of R2, checks each form's policy and signature, and re-uploads the file with its own R2 credentials.
+The app only needs its upload URL pointed at repost.
 
-## Configuration
+The protocol and validation rules are specified in [`spec.md`](spec.md).
 
-All configuration is loaded from environment variables at startup.
-The process exits with a precise error if any required variable is missing.
+## How it works
 
-| Variable                  | Required | Default      | Description                                                                |
-| ------------------------- | :------: | ------------ | -------------------------------------------------------------------------- |
-| `SHIM_ACCESS_KEY_ID`      |    ✓     |              | The "access key" the application uses against the shim. Not a real AWS key.|
-| `SHIM_SECRET_ACCESS_KEY`  |    ✓     |              | Shared secret used to verify POST policy signatures.                       |
-| `SHIM_REGION`             |    ✓     |              | Region string used in SigV4 verification (typically `auto`).               |
-| `R2_ACCOUNT_ID`           |    ✓     |              | Cloudflare account ID.                                                     |
-| `R2_ACCESS_KEY_ID`        |    ✓     |              | R2 API token key ID.                                                       |
-| `R2_SECRET_ACCESS_KEY`    |    ✓     |              | R2 API token secret.                                                       |
-| `R2_BUCKET`               |    ✓     |              | Target R2 bucket name.                                                     |
-| `ALLOWED_ORIGINS`         |    ✓     |              | Comma-separated list of allowed CORS origins.                              |
-| `MAX_UPLOAD_BYTES`        |          | `26214400`   | Maximum file size in bytes (25 MiB default).                               |
-| `SHIM_BASE_HOST`          |          | (empty)      | Bare hostname (e.g. `s3-shim.example.com`). Enables virtual-host routing.  |
-| `BIND_INTERFACE`          |          | `0.0.0.0`    | Interface to bind on.                                                      |
-| `PORT`                    |          | `4000`       | TCP port.                                                                  |
+1. The browser posts a `multipart/form-data` form, signed by the app, to repost.
+2. repost reads the text fields and verifies the policy, credential and signature before it reads any file bytes.
+3. repost streams the file to R2.
+   Files up to 5 MiB go up as a single `PUT`.
+   Larger files go up as an R2 multipart upload in 5 MiB parts, and a failure part-way aborts the upload.
+4. repost returns `204` with R2's `ETag`, or an S3-style XML error.
 
-## Run locally
+File bytes never touch disk.
+Each upload holds about one 5 MiB part plus one 64 KiB network chunk in memory, briefly doubling while a part is assembled.
 
-```sh
-gleam run        # foreground, with env vars set in the shell
-gleam test       # 130 unit, integration, and e2e tests
-```
+## Quick start
 
-## Run in Docker
+With Docker:
 
 ```sh
 docker build -t repost .
@@ -50,35 +39,76 @@ docker run --rm -p 4000:4000 \
   repost
 ```
 
-## Module layout
+Without Docker, set the same variables in your shell and run `gleam run`.
 
-- `repost/server` handles mist requests; `repost/server/response` builds upload responses.
-- `repost/upload` runs the multipart event loop; `repost/upload/sink` buffers parts and selects a single PUT or R2 multipart upload.
-- `repost/authorize`, `repost/policy`, and `repost/policy/validator` validate POST policies and form fields.
-- `repost/multipart` parses incoming multipart forms; `repost/multipart/boundary` handles boundaries.
-- `repost/sigv4` signs R2 requests and verifies POST signatures; `repost/sigv4/uri` encodes request paths.
-- `repost/r2` sends signed requests through `gleam_httpc`; `repost/r2/put_object`, `repost/r2/multipart_upload`, and `repost/r2/xml` handle R2 operations and responses.
-- `repost/router`, `repost/cors`, and `repost/errors` handle routing, CORS, and S3-style errors.
-- `repost/config` loads settings; `repost/time` provides time formatting.
+## Configuration
 
-## Tests
+### repost
 
-```sh
-gleam test
-```
+repost reads its configuration from environment variables at startup.
+If a required variable is missing or invalid, it exits and names the variable.
 
-Suite includes:
+| Variable                 | Required | Default    | Description                                                                 |
+| ------------------------ | :------: | ---------- | --------------------------------------------------------------------------- |
+| `SHIM_ACCESS_KEY_ID`     |    ✓     |            | Access key the app signs with. An arbitrary string, not a real AWS key.     |
+| `SHIM_SECRET_ACCESS_KEY` |    ✓     |            | Secret shared with the app, used to verify policy signatures.               |
+| `SHIM_REGION`            |    ✓     |            | Region the app signs for, usually `auto`.                                   |
+| `R2_ACCOUNT_ID`          |    ✓     |            | Cloudflare account ID.                                                      |
+| `R2_ACCESS_KEY_ID`       |    ✓     |            | R2 API token key ID.                                                        |
+| `R2_SECRET_ACCESS_KEY`   |    ✓     |            | R2 API token secret.                                                        |
+| `R2_BUCKET`              |    ✓     |            | R2 bucket to upload into. Requests for any other bucket get `404`.          |
+| `ALLOWED_ORIGINS`        |    ✓     |            | Comma-separated list of browser origins allowed to upload.                  |
+| `MAX_UPLOAD_BYTES`       |          | `26214400` | Largest accepted file, in bytes (25 MiB).                                   |
+| `SHIM_BASE_HOST`         |          | (empty)    | Bare hostname such as `s3-shim.example.com`. Enables virtual-host routing.  |
+| `BIND_INTERFACE`         |          | `0.0.0.0`  | Interface to listen on.                                                     |
+| `PORT`                   |          | `4000`     | TCP port to listen on.                                                      |
 
-- SigV4 vectors cross-validated against an independent Python `hmac` reference (signing-key derivation, POST-policy signature, and signed R2 requests).
-- Policy validation over every §10.5 condition shape (eq, starts-with, content-length-range, coverage check, exempt list).
-- Multipart parsing with transport chunks crossing form boundaries.
-- R2 request and XML tests, including multipart operations and an error inside a successful HTTP response.
-- End-to-end tests with a chunked HTTP/1.1 browser request and a fake R2 verify single PUT for files up to one part, byte-exact multipart uploads for larger files, and aborts on size limits and R2 failures.
+### The app
+
+Point the app's S3 settings at repost and give it the shim credentials, not the R2 ones.
+For Outline:
+
+| Variable                    | Value                                             |
+| --------------------------- | ------------------------------------------------- |
+| `AWS_S3_UPLOAD_BUCKET_URL`  | repost's URL, e.g. `https://s3-shim.example.com`  |
+| `AWS_S3_UPLOAD_BUCKET_NAME` | Same as `R2_BUCKET`                               |
+| `AWS_ACCESS_KEY_ID`         | Same as `SHIM_ACCESS_KEY_ID`                      |
+| `AWS_SECRET_ACCESS_KEY`     | Same as `SHIM_SECRET_ACCESS_KEY`                  |
+| `AWS_REGION`                | Same as `SHIM_REGION`                             |
+| `AWS_S3_FORCE_PATH_STYLE`   | `true`; may be `false` once `SHIM_BASE_HOST` is set |
+
+Reads do not go through repost: the app still reads objects from R2 directly.
 
 ## Operations
 
-Configure an R2 lifecycle rule to abort incomplete multipart uploads after 1 day.
-A process crash during an upload cannot run the abort request, so the rule clears orphaned uploads.
+Add an R2 lifecycle rule that aborts incomplete multipart uploads after one day.
+repost aborts failed uploads itself, but if the process crashes mid-upload, the abort never runs and R2 keeps the partial upload.
+
+Before a request is authenticated, repost caps what it will buffer: at most 64 text fields, 1 MiB of field names and values, and 64 KiB per part header.
+
+## Development
+
+```sh
+gleam test    # 129 unit, integration and end-to-end tests
+```
+
+The end-to-end tests run repost against a fake R2 server and send real chunked HTTP/1.1 uploads.
+They cover the single `PUT` and multipart paths byte for byte, size limits, and aborts after R2 failures.
+The SigV4 test vectors are checked against an independent Python `hmac` implementation.
+
+### Module layout
+
+| Module                                                   | Responsibility                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------- |
+| `repost/server`, `server/response`                       | HTTP entry point: routing, CORS, and building responses.            |
+| `repost/upload`                                          | Reads form parts in order and hands the file to the sink.           |
+| `repost/upload/sink`                                     | Buffers file bytes into parts and chooses single `PUT` or multipart. |
+| `repost/authorize`, `policy`, `policy/validator`         | Checks the credential, signature, expiry and policy conditions.     |
+| `repost/multipart`, `multipart/boundary`                 | Streaming `multipart/form-data` parser.                             |
+| `repost/r2`, `r2/put_object`, `r2/multipart_upload`      | Signed requests to R2 over `gleam_httpc`.                           |
+| `repost/sigv4`, `sigv4/uri`                              | SigV4 signing and POST policy signature verification.               |
+| `repost/xml`                                             | Reads R2's XML responses and escapes XML text.                      |
+| `repost/router`, `cors`, `errors`, `config`, `time`      | Bucket routing, CORS rules, S3 error bodies, settings, timestamps.  |
 
 ## License
 
