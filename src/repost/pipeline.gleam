@@ -63,7 +63,7 @@ pub fn run(inputs: Inputs) -> Result(ValidatedRequest, ErrorResponse) {
   ))
   use _ <- result.try(check_size(inputs.file_size, inputs.max_upload_bytes))
 
-  let key = required_field(inputs.fields, "key")
+  use key <- result.try(check_key(inputs.fields))
   let content_type = lookup_form_value(inputs.raw_values, "content-type")
   Ok(ValidatedRequest(bucket: inputs.bucket, key:, content_type:))
 }
@@ -77,6 +77,14 @@ pub fn check_required(fields: FieldMap) -> Result(Nil, ErrorResponse) {
     Ok(missing) ->
       Error(errors.invalid_request("missing required field: " <> missing))
     Error(_) -> Ok(Nil)
+  }
+}
+
+/// An empty key would turn the R2 PUT into a bucket-level request.
+pub fn check_key(fields: FieldMap) -> Result(String, ErrorResponse) {
+  case required_field(fields, "key") {
+    "" -> Error(errors.invalid_request("key must not be empty"))
+    key -> Ok(key)
   }
 }
 

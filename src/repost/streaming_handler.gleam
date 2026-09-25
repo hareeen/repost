@@ -33,9 +33,12 @@ pub fn handle(
   let host = http_request.get_header(req, "host")
   let segments = http_request.path_segments(req)
   let response = case router.route(host, segments, deps.config.shim_base_host) {
-    router.NoRoute -> mist_response.xml_error(decision, errors.no_such_bucket())
-    router.BucketRoute(bucket:, remainder:) ->
+    // Every upload lands in `r2_bucket`, so any other bucket name is
+    // refused rather than silently redirected.
+    router.BucketRoute(bucket:, remainder:) if bucket == deps.config.r2_bucket ->
       handle_bucket(req, deps, decision, bucket, remainder)
+    router.BucketRoute(..) | router.NoRoute ->
+      mist_response.xml_error(decision, errors.no_such_bucket())
   }
   apply_connection_header(response, response.status >= 400 || wants_close(req))
 }

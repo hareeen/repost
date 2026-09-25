@@ -22,6 +22,10 @@ import repost/time
 
 const text_fields_cap: Int = 1_048_576
 
+/// Text fields are buffered before the policy is checked, so without a count
+/// cap an unauthenticated client could grow `fields` with endless parts.
+const max_text_fields: Int = 64
+
 pub type Clock =
   fn() -> Int
 
@@ -51,6 +55,7 @@ pub fn run(
       bucket:,
       fields: dict.new(),
       field_bytes_used: 0,
+      field_count: 0,
       current_field: NoCurrentField,
       r2: NoR2,
       file_bytes_seen: 0,
@@ -83,6 +88,7 @@ type ProcessState {
     bucket: String,
     fields: Dict(String, String),
     field_bytes_used: Int,
+    field_count: Int,
     current_field: CurrentField,
     r2: R2State,
     file_bytes_seen: Int,
@@ -133,14 +139,28 @@ fn handle_part_start(
             ),
           )
         }
-        NoR2 ->
-          loop(
-            parser,
-            ProcessState(
-              ..state,
-              current_field: CollectingTextField(name:, accumulated: <<>>),
-            ),
-          )
+        NoR2 -> {
+          // Names are retained as dict keys, so they count against the cap.
+          let used = state.field_bytes_used + string.byte_size(name)
+          let count = state.field_count + 1
+          case used > text_fields_cap || count > max_text_fields {
+            True ->
+              mist_response.xml_error(
+                state.decision,
+                errors.invalid_request("form fields exceeded soft cap"),
+              )
+            False ->
+              loop(
+                parser,
+                ProcessState(
+                  ..state,
+                  field_bytes_used: used,
+                  field_count: count,
+                  current_field: CollectingTextField(name:, accumulated: <<>>),
+                ),
+              )
+          }
+        }
       }
   }
 }
@@ -350,11 +370,8 @@ fn validate_pre_file(
     credential,
     state.deps.config.shim_secret_access_key,
   ))
+  use key <- result.try(pipeline.check_key(lowered))
 
-  let key = case dict.get(lowered, "key") {
-    Ok(k) -> k
-    Error(_) -> ""
-  }
   let content_type = dict.get(lowered, "content-type")
   Ok(#(policy_doc, key, content_type))
 }

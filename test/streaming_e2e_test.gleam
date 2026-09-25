@@ -43,7 +43,7 @@ fn test_config() -> config.Config {
     r2_account_id: "fake",
     r2_access_key_id: "AKIATEST",
     r2_secret_access_key: "r2-secret",
-    r2_bucket: "destination-bucket",
+    r2_bucket: "my-bucket",
     allowed_origins: ["https://outline.example.com"],
     max_upload_bytes: 1_048_576,
     shim_base_host: "",
@@ -348,7 +348,7 @@ pub fn happy_path_chunked_request_chunked_to_r2_test() {
   // Verify R2 received exactly the bytes we sent.
   let assert Ok(captured) = process.receive(capture, 2000)
   assert captured.method == http.Put
-  assert captured.path == "/destination-bucket/u/photo.png"
+  assert captured.path == "/my-bucket/u/photo.png"
   assert captured.body == payload
   let assert Ok(content_sha) =
     list.key_find(captured.headers, "x-amz-content-sha256")
@@ -477,6 +477,84 @@ pub fn rejects_fields_after_file_part_test() {
 
   assert status == 400
   assert string.contains(body_str, "<Code>InvalidRequest</Code>")
+}
+
+pub fn rejects_bucket_other_than_r2_bucket_test() {
+  let #(_capture, r2_port) = start_fake_r2()
+  let shim_port = start_shim(make_deps(r2_port))
+
+  let #(status, _headers, body_bytes) =
+    post_without_origin(shim_port, "other-bucket")
+  let assert Ok(body_str) = bit_array.to_string(body_bytes)
+
+  assert status == 404
+  assert string.contains(body_str, "<Code>NoSuchBucket</Code>")
+}
+
+pub fn rejects_empty_key_test() {
+  let #(capture, r2_port) = start_fake_r2()
+  let shim_port = start_shim(make_deps(r2_port))
+
+  let p =
+    build_policy_with_conditions(
+      "{\"bucket\":\"my-bucket\"},"
+      <> "[\"starts-with\",\"$key\",\"\"],"
+      <> "[\"starts-with\",\"$Content-Type\",\"image/\"]",
+    )
+  let body =
+    build_multipart_body(
+      [
+        #("key", ""),
+        #("Content-Type", "image/png"),
+        #("policy", p),
+        #("x-amz-algorithm", "AWS4-HMAC-SHA256"),
+        #("x-amz-credential", credential),
+        #("x-amz-date", amz_date),
+        #("x-amz-signature", sign(p)),
+      ],
+      "photo.png",
+      "image/png",
+      bit_array.from_string("data"),
+    )
+
+  let #(status, _headers, body_bytes) =
+    post_chunked(
+      shim_port,
+      "my-bucket",
+      "https://outline.example.com",
+      body,
+      64,
+    )
+  let assert Ok(body_str) = bit_array.to_string(body_bytes)
+
+  assert status == 400
+  assert string.contains(body_str, "<Code>InvalidRequest</Code>")
+  assert process.receive(capture, 200) == Error(Nil)
+}
+
+pub fn rejects_flood_of_unauthenticated_fields_test() {
+  let #(_capture, r2_port) = start_fake_r2()
+  let shim_port = start_shim(make_deps(r2_port))
+
+  let fields =
+    int.range(from: 0, to: 200, with: [], run: fn(acc, i) {
+      [#("x-flood-" <> int.to_string(i), ""), ..acc]
+    })
+  let body =
+    build_multipart_body(fields, "x", "image/png", bit_array.from_string("d"))
+
+  let #(status, _headers, body_bytes) =
+    post_chunked(
+      shim_port,
+      "my-bucket",
+      "https://outline.example.com",
+      body,
+      256,
+    )
+  let assert Ok(body_str) = bit_array.to_string(body_bytes)
+
+  assert status == 400
+  assert string.contains(body_str, "form fields exceeded soft cap")
 }
 
 pub fn rejects_missing_origin_on_post_test() {
