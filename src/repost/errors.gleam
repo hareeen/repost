@@ -1,6 +1,6 @@
 //// S3-style XML error responses (`<Code>` and `<Message>` only — spec §6.3).
 
-import gleam/string
+import repost/xml
 
 pub type ErrorKind {
   SignatureDoesNotMatch
@@ -92,15 +92,6 @@ pub fn to_xml(error: ErrorResponse) -> String {
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>"
   <> code(kind)
   <> "</Code><Message>"
-  <> escape_xml(message)
+  <> xml.escape(message)
   <> "</Message></Error>"
-}
-
-fn escape_xml(input: String) -> String {
-  input
-  |> string.replace("&", "&amp;")
-  |> string.replace("<", "&lt;")
-  |> string.replace(">", "&gt;")
-  |> string.replace("\"", "&quot;")
-  |> string.replace("'", "&apos;")
 }

@@ -7,8 +7,8 @@ import gleam/result
 import gleam/string
 
 import repost/r2
-import repost/r2/xml
 import repost/sigv4
+import repost/xml
 
 pub opaque type UploadId {
   UploadId(String)
@@ -117,7 +117,7 @@ pub fn complete(
       "<Part><PartNumber>"
       <> int.to_string(part_number_value(part.number))
       <> "</PartNumber><ETag>"
-      <> escape_xml(part.etag)
+      <> xml.escape(part.etag)
       <> "</ETag></Part>"
     })
     |> string.concat
@@ -188,13 +188,4 @@ fn send(
 
 fn decode_body(body: BitArray) -> Result(String, MultipartError) {
   bit_array.to_string(body) |> result.map_error(fn(_) { ResponseNotUtf8 })
-}
-
-fn escape_xml(value: String) -> String {
-  value
-  |> string.replace("&", "&amp;")
-  |> string.replace("<", "&lt;")
-  |> string.replace(">", "&gt;")
-  |> string.replace("\"", "&quot;")
-  |> string.replace("'", "&apos;")
 }

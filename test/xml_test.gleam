@@ -1,4 +1,4 @@
-import repost/r2/xml
+import repost/xml
 
 // AWS CreateMultipartUpload sample response: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 fn initiate_response() -> String {

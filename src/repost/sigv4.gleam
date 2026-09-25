@@ -63,8 +63,6 @@ pub fn sha256_hex(input: BitArray) -> String {
   hex(crypto.hash(crypto.Sha256, input))
 }
 
-pub const empty_sha256_hex: String = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
 pub type PostVerifyError {
   PostSignatureMismatch
 }

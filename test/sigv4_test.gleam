@@ -104,10 +104,6 @@ pub fn parse_credential_rejects_too_few_parts_test() {
     == Error(sigv4.MalformedCredential)
 }
 
-pub fn empty_sha256_constant_test() {
-  assert sigv4.empty_sha256_hex == sigv4.sha256_hex(<<>>)
-}
-
 pub fn sha256_known_value_test() {
   // SHA256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
   assert sigv4.sha256_hex(bit_array.from_string("abc"))
@@ -216,7 +212,7 @@ pub fn sign_put_omits_content_type_when_absent_test() {
       "/bucket/key",
       [],
       [#("host", "example.r2.cloudflarestorage.com")],
-      sigv4.empty_sha256_hex,
+      sigv4.sha256_hex(<<>>),
       "20240101T000000Z",
       example_credentials(),
     )

@@ -7,7 +7,6 @@ import gleam/int
 import repost/config.{type Config}
 import repost/errors.{type ErrorResponse}
 import repost/r2
-import repost/sigv4
 
 pub fn put_buffered(
   endpoint: r2.Endpoint,
@@ -21,17 +20,10 @@ pub fn put_buffered(
     Ok(value) -> [#("content-type", value)]
     Error(_) -> []
   }
-  let creds =
-    sigv4.SigningCredentials(
-      access_key: config.r2_access_key_id,
-      secret: config.r2_secret_access_key,
-      region: "auto",
-      service: "s3",
-    )
   case
     r2.send(
       endpoint,
-      creds,
+      r2.credentials(config),
       http.Put,
       config.r2_bucket,
       key,

@@ -7,7 +7,6 @@ import repost/errors.{type ErrorResponse}
 import repost/r2.{type Endpoint}
 import repost/r2/multipart_upload as multipart
 import repost/r2/put_object
-import repost/sigv4
 
 pub opaque type Sink {
   Sink(
@@ -66,7 +65,7 @@ fn drain(sink: Sink) -> Result(Sink, #(Sink, ErrorResponse)) {
     // Holding exactly one part lets an exactly-part-sized file finish as one PUT.
     Pending(_, size) if size <= part_size -> Ok(sink)
     Pending(buffer, size) -> {
-      let creds = credentials(config)
+      let creds = r2.credentials(config)
       case
         multipart.create(
           endpoint,
@@ -110,7 +109,7 @@ fn drain(sink: Sink) -> Result(Sink, #(Sink, ErrorResponse)) {
               id,
               next + 1,
               [uploaded, ..parts],
-              [rest],
+              [copy(rest)],
               size - part_size,
             ),
           ))
@@ -153,7 +152,7 @@ pub fn finish(
           case
             multipart.complete(
               endpoint,
-              credentials(config),
+              r2.credentials(config),
               config.r2_bucket,
               key,
               id,
@@ -180,7 +179,7 @@ pub fn abort(sink: Sink, original: ErrorResponse) -> #(Sink, ErrorResponse) {
       case
         multipart.abort(
           endpoint,
-          credentials(config),
+          r2.credentials(config),
           config.r2_bucket,
           key,
           id,
@@ -212,7 +211,7 @@ fn send_part(
     Ok(part_number) ->
       multipart.upload_part(
         endpoint,
-        credentials(config),
+        r2.credentials(config),
         config.r2_bucket,
         key,
         id,
@@ -222,15 +221,6 @@ fn send_part(
       )
       |> result.map_error(fn(err) { multipart_error("UploadPart", err) })
   }
-}
-
-fn credentials(config: Config) -> sigv4.SigningCredentials {
-  sigv4.SigningCredentials(
-    access_key: config.r2_access_key_id,
-    secret: config.r2_secret_access_key,
-    region: "auto",
-    service: "s3",
-  )
 }
 
 fn multipart_error(
@@ -243,3 +233,7 @@ fn multipart_error(
   }
   errors.internal_error("R2 " <> operation <> detail)
 }
+
+/// `rest` is a slice of the joined buffer, so without a copy it keeps that whole buffer (up to two parts) alive until the next flush.
+@external(erlang, "binary", "copy")
+fn copy(bytes: BitArray) -> BitArray

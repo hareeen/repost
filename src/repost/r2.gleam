@@ -6,6 +6,7 @@ import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 
+import repost/config.{type Config}
 import repost/sigv4
 import repost/sigv4/uri
 import repost/time
@@ -20,6 +21,15 @@ pub type Endpoint {
 pub type R2Error {
   R2Unreachable(detail: httpc.HttpError)
   R2Status(status: Int, body: BitArray)
+}
+
+pub fn credentials(config: Config) -> sigv4.SigningCredentials {
+  sigv4.SigningCredentials(
+    access_key: config.r2_access_key_id,
+    secret: config.r2_secret_access_key,
+    region: "auto",
+    service: "s3",
+  )
 }
 
 pub fn send(
@@ -89,8 +99,7 @@ pub fn send(
   }
 }
 
-@internal
-pub fn endpoint_parts(endpoint: Endpoint) -> #(http.Scheme, String, Int) {
+fn endpoint_parts(endpoint: Endpoint) -> #(http.Scheme, String, Int) {
   case endpoint {
     R2Endpoint(account_id:) -> #(
       http.Https,
@@ -101,8 +110,7 @@ pub fn endpoint_parts(endpoint: Endpoint) -> #(http.Scheme, String, Int) {
   }
 }
 
-@internal
-pub fn host_header_for(host: String, port: Int, scheme: http.Scheme) -> String {
+fn host_header_for(host: String, port: Int, scheme: http.Scheme) -> String {
   case scheme, port {
     http.Https, 443 -> host
     http.Http, 80 -> host

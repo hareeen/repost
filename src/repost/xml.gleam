@@ -22,6 +22,15 @@ pub fn element_text(xml: String, tag: String) -> Result(String, XmlError) {
   }
 }
 
+pub fn escape(value: String) -> String {
+  value
+  |> string.replace("&", "&amp;")
+  |> string.replace("<", "&lt;")
+  |> string.replace(">", "&gt;")
+  |> string.replace("\"", "&quot;")
+  |> string.replace("'", "&apos;")
+}
+
 pub fn error_code(xml: String) -> Result(String, Nil) {
   case string.split_once(xml, "<Error>") {
     Error(_) -> Error(Nil)
