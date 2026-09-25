@@ -3,11 +3,8 @@
 //// and asserts what each end sees.
 
 import gleam/bit_array
-import gleam/bytes_tree
 import gleam/erlang/process
 import gleam/http
-import gleam/http/request as http_request
-import gleam/http/response as http_response
 import gleam/int
 import gleam/list
 import gleam/string
@@ -15,10 +12,11 @@ import mist
 
 import repost/config
 import repost/r2
-import repost/r2_stream
 import repost/server
 import repost/sigv4
 import repost/upload
+import support/fake_r2
+import support/raw_client
 
 const shim_secret: String = "shim-secret-for-tests"
 
@@ -52,15 +50,6 @@ fn test_config() -> config.Config {
   )
 }
 
-pub type Captured {
-  Captured(
-    method: http.Method,
-    path: String,
-    headers: List(#(String, String)),
-    body: BitArray,
-  )
-}
-
 fn build_policy_b64(content_length_range: String) -> String {
   let extra = case content_length_range {
     "" -> ""
@@ -85,39 +74,6 @@ fn build_policy_with_conditions(conditions_json: String) -> String {
 fn sign(policy_b64: String) -> String {
   let signing = sigv4.signing_key(shim_secret, date, shim_region, "s3")
   sigv4.hex(sigv4.hmac(bit_array.from_string(policy_b64), signing))
-}
-
-fn start_fake_r2() -> #(process.Subject(Captured), Int) {
-  let capture = process.new_subject()
-  let port_subj = process.new_subject()
-  let assert Ok(_) =
-    mist.new(fn(req: http_request.Request(mist.Connection)) {
-      case mist.read_body(req, max_body_limit: 50_000_000) {
-        Ok(req2) -> {
-          process.send(
-            capture,
-            Captured(
-              method: req2.method,
-              path: req2.path,
-              headers: req2.headers,
-              body: req2.body,
-            ),
-          )
-          http_response.new(200)
-          |> http_response.set_header("etag", "\"e2e-streamed\"")
-          |> http_response.set_body(mist.Bytes(bytes_tree.from_string("")))
-        }
-        Error(_) ->
-          http_response.new(400)
-          |> http_response.set_body(mist.Bytes(bytes_tree.from_string("bad")))
-      }
-    })
-    |> mist.bind("127.0.0.1")
-    |> mist.port(0)
-    |> mist.after_start(fn(p, _, _) { process.send(port_subj, p) })
-    |> mist.start
-  let assert Ok(port) = process.receive(port_subj, 5000)
-  #(capture, port)
 }
 
 fn start_shim(deps: upload.Deps) -> Int {
@@ -237,19 +193,16 @@ fn post_chunked(
     #("content-type", "multipart/form-data; boundary=" <> boundary),
     #("connection", "close"),
   ]
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
+  let assert Ok(resp) =
+    raw_client.request(
       port,
       "POST",
       "/" <> bucket,
       headers,
-      5000,
+      body,
+      chunk_size,
+      10_000,
     )
-  send_in_chunks(conn, body, chunk_size)
-  let assert Ok(resp) = r2_stream.finish(conn, 10_000)
-  r2_stream.close(conn)
   #(resp.status, resp.headers, resp.body)
 }
 
@@ -262,40 +215,9 @@ fn post_without_origin(
     #("host", host_header),
     #("connection", "close"),
   ]
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
-      port,
-      "POST",
-      "/" <> bucket,
-      headers,
-      5000,
-    )
-  let assert Ok(resp) = r2_stream.finish(conn, 10_000)
-  r2_stream.close(conn)
+  let assert Ok(resp) =
+    raw_client.request(port, "POST", "/" <> bucket, headers, <<>>, 64, 10_000)
   #(resp.status, resp.headers, resp.body)
-}
-
-/// Tolerates an early hang-up from the server, mirroring how real S3
-/// clients behave.
-fn send_in_chunks(conn: r2_stream.Conn, body: BitArray, chunk_size: Int) -> Nil {
-  let total = bit_array.byte_size(body)
-  case total {
-    0 -> Nil
-    _ -> {
-      let take = case total < chunk_size {
-        True -> total
-        False -> chunk_size
-      }
-      let assert Ok(slice) = bit_array.slice(body, 0, take)
-      let assert Ok(rest) = bit_array.slice(body, take, total - take)
-      case r2_stream.send_chunk(conn, slice) {
-        Error(_) -> Nil
-        Ok(_) -> send_in_chunks(conn, rest, chunk_size)
-      }
-    }
-  }
 }
 
 fn make_deps(r2_port: Int) -> upload.Deps {
@@ -307,7 +229,7 @@ fn make_deps(r2_port: Int) -> upload.Deps {
 }
 
 pub fn happy_path_chunked_request_chunked_to_r2_test() {
-  let #(capture, r2_port) = start_fake_r2()
+  let #(capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let p = build_policy_b64("[\"content-length-range\",1,1000000]")
@@ -363,7 +285,7 @@ pub fn happy_path_chunked_request_chunked_to_r2_test() {
 }
 
 pub fn aborts_when_content_length_range_upper_bound_exceeded_mid_stream_test() {
-  let #(capture, r2_port) = start_fake_r2()
+  let #(capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   // Policy permits up to 100 bytes; we send 500.
@@ -403,7 +325,7 @@ pub fn aborts_when_content_length_range_upper_bound_exceeded_mid_stream_test() {
 }
 
 pub fn enforces_conditions_after_positive_length_minimum_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let p =
@@ -444,7 +366,7 @@ pub fn enforces_conditions_after_positive_length_minimum_test() {
 }
 
 pub fn rejects_fields_after_file_part_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let p = build_policy_b64("[\"content-length-range\",1,1000000]")
@@ -480,7 +402,7 @@ pub fn rejects_fields_after_file_part_test() {
 }
 
 pub fn rejects_bucket_other_than_r2_bucket_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let #(status, _headers, body_bytes) =
@@ -492,7 +414,7 @@ pub fn rejects_bucket_other_than_r2_bucket_test() {
 }
 
 pub fn rejects_empty_key_test() {
-  let #(capture, r2_port) = start_fake_r2()
+  let #(capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let p =
@@ -533,7 +455,7 @@ pub fn rejects_empty_key_test() {
 }
 
 pub fn rejects_flood_of_unauthenticated_fields_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let fields =
@@ -558,7 +480,7 @@ pub fn rejects_flood_of_unauthenticated_fields_test() {
 }
 
 pub fn rejects_missing_origin_on_post_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
 
   let #(status, _headers, body_bytes) =
@@ -570,13 +492,11 @@ pub fn rejects_missing_origin_on_post_test() {
 }
 
 pub fn rejects_disallowed_origin_on_preflight_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
   let host_header = "127.0.0.1:" <> int.to_string(shim_port)
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
+  let assert Ok(resp) =
+    raw_client.request(
       shim_port,
       "OPTIONS",
       "/my-bucket",
@@ -585,17 +505,17 @@ pub fn rejects_disallowed_origin_on_preflight_test() {
         #("origin", "https://attacker.example.com"),
         #("connection", "close"),
       ],
+      <<>>,
+      64,
       5000,
     )
-  let assert Ok(resp) = r2_stream.finish(conn, 5000)
-  r2_stream.close(conn)
   assert resp.status == 403
   let assert Ok(body_str) = bit_array.to_string(resp.body)
   assert string.contains(body_str, "<Code>AccessDenied</Code>")
 }
 
 pub fn rejects_signature_mismatch_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
   let p = build_policy_b64("")
   let body =
@@ -629,7 +549,7 @@ pub fn rejects_signature_mismatch_test() {
 
 pub fn accepts_content_type_without_space_before_boundary_test() {
   // RFC 7231 permits parameters with or without leading whitespace.
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
   let p = build_policy_b64("")
   let body =
@@ -650,10 +570,8 @@ pub fn accepts_content_type_without_space_before_boundary_test() {
   // Build the request directly so we control the Content-Type byte-for-byte
   // (no space after `;`).
   let host_header = "127.0.0.1:" <> int.to_string(shim_port)
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
+  let assert Ok(resp) =
+    raw_client.request(
       shim_port,
       "POST",
       "/my-bucket",
@@ -663,16 +581,15 @@ pub fn accepts_content_type_without_space_before_boundary_test() {
         #("content-type", "multipart/form-data;boundary=" <> boundary),
         #("connection", "close"),
       ],
+      body,
+      64,
       5000,
     )
-  send_in_chunks(conn, body, 64)
-  let assert Ok(resp) = r2_stream.finish(conn, 5000)
-  r2_stream.close(conn)
   assert resp.status == 204
 }
 
 pub fn accepts_quoted_boundary_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
   let p = build_policy_b64("")
   let body =
@@ -691,10 +608,8 @@ pub fn accepts_quoted_boundary_test() {
       bit_array.from_string("data"),
     )
   let host_header = "127.0.0.1:" <> int.to_string(shim_port)
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
+  let assert Ok(resp) =
+    raw_client.request(
       shim_port,
       "POST",
       "/my-bucket",
@@ -707,22 +622,19 @@ pub fn accepts_quoted_boundary_test() {
         ),
         #("connection", "close"),
       ],
+      body,
+      64,
       5000,
     )
-  send_in_chunks(conn, body, 64)
-  let assert Ok(resp) = r2_stream.finish(conn, 5000)
-  r2_stream.close(conn)
   assert resp.status == 204
 }
 
 pub fn options_preflight_test() {
-  let #(_capture, r2_port) = start_fake_r2()
+  let #(_capture, r2_port) = fake_r2.start()
   let shim_port = start_shim(make_deps(r2_port))
   let host_header = "127.0.0.1:" <> int.to_string(shim_port)
-  let assert Ok(conn) =
-    r2_stream.start(
-      http.Http,
-      "127.0.0.1",
+  let assert Ok(resp) =
+    raw_client.request(
       shim_port,
       "OPTIONS",
       "/my-bucket",
@@ -731,10 +643,10 @@ pub fn options_preflight_test() {
         #("origin", "https://outline.example.com"),
         #("connection", "close"),
       ],
+      <<>>,
+      64,
       5000,
     )
-  let assert Ok(resp) = r2_stream.finish(conn, 5000)
-  r2_stream.close(conn)
   assert resp.status == 204
   let assert Ok(allow_origin) =
     list.key_find(resp.headers, "access-control-allow-origin")
