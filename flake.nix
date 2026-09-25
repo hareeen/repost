@@ -35,9 +35,12 @@
         {
           config,
           pkgs,
+          self',
           ...
         }:
         {
+          packages.default = pkgs.callPackage ./nix/package.nix { source = ./.; };
+
           treefmt = {
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
@@ -79,13 +82,11 @@
           };
 
           devShells.default = pkgs.mkShell {
-            inputsFrom = [ config.pre-commit.devShell ];
-            packages = [
-              pkgs.gleam
-              pkgs.erlang_28
-              pkgs.rebar3
-              config.treefmt.build.wrapper
+            inputsFrom = [
+              config.pre-commit.devShell
+              self'.packages.default
             ];
+            packages = [ config.treefmt.build.wrapper ];
           };
         };
     };
