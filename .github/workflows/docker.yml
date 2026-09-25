@@ -29,13 +29,6 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v23
       - uses: DeterminateSystems/magic-nix-cache-action@v15
 
-      # skopeo, behind copyTo, falls back to the Docker credentials this writes, so the token never appears on a command line that copyTo echoes.
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - run: nix build .#repost-image-${{ matrix.arch }}
 
       - name: Smoke test
@@ -52,14 +45,20 @@ jobs:
           echo "$output"
           grep -q SHIM_ACCESS_KEY_ID <<<"$output"
 
-      # The per-arch tag is only the input to the merge job's index; users pull the multi-arch tags.
-      - name: Push
+      # Images travel to the publish job as artifacts, so nothing reaches the registry unless every architecture passed.
+      - name: Export
         env:
           ATTR: repost-image-${{ matrix.arch }}
-          TAG: ${{ github.sha }}-${{ matrix.arch }}
-        run: nix run ".#$ATTR.copyTo" -- "docker://$IMAGE:$TAG"
+        run: nix run ".#$ATTR.copyTo" -- "oci:image:${{ matrix.arch }}"
 
-  merge:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.arch }}
+          path: image
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -67,6 +66,10 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@v23
       - uses: DeterminateSystems/magic-nix-cache-action@v15
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
 
       # regctl reads the Docker credentials this writes, so the token stays off the command line.
       - uses: docker/login-action@v3
@@ -85,15 +88,20 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
 
-      - name: Push index
+      - name: Install regctl
+        run: echo "$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#regclient)/bin" >> "$GITHUB_PATH"
+
+      # The index and its platform manifests are pushed once per tag; the platform manifests go by digest only, so no per-arch tags appear.
+      - name: Assemble and push
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
-          SHA: ${{ github.sha }}
         run: |
+          for arch in amd64 arm64; do
+            regctl image copy "ocidir://image-$arch:$arch" "ocidir://oci:$arch"
+          done
+          regctl index create ocidir://oci:latest --ref ocidir://oci:amd64 --ref ocidir://oci:arm64
+          regctl manifest get ocidir://oci:latest
           while read -r tag; do
             [ -n "$tag" ] || continue
-            nix shell --inputs-from . nixpkgs#regclient -c \
-              regctl index create "$tag" \
-              --ref "$IMAGE:$SHA-amd64" \
-              --ref "$IMAGE:$SHA-arm64"
+            regctl image copy ocidir://oci:latest "$tag"
           done <<<"$TAGS"
