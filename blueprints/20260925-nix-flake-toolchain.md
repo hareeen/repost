@@ -65,11 +65,11 @@ Checkpoints: after T3 (toolchain unified: devShell, hooks, reformat, CI) and aft
   - Depends on: T6
   - Context: locally verifiable now: `nix build .#packages.aarch64-linux.repost-image-arm64`, the cross probe, `.#packages.aarch64-linux.repost-image`, and `nix build .#checks.aarch64-linux.launcher`. No Docker on this Mac, so the container smoke test and the x86_64-host builds are CI-only.
 
-- [ ] T7: Remove `Dockerfile` and `.dockerignore`. **Gate: run only after you confirm T6's workflow passed in CI.**
+- [x] T7: Remove `Dockerfile` and `.dockerignore`. **Gate: run only after you confirm T6's workflow passed in CI.**
   - Files: `Dockerfile`, `.dockerignore`, `README.md`
   - Depends on: T6
 
-- [ ] T8: Acceptance. Confirm `setup-beam` and `1.15.4` appear nowhere; the devShell, CI and hooks all get Gleam from the same flake (`nix develop -c gleam --version` = 1.18.1); `nix flake check` passes; statix and deadnix are clean on `flake.nix` and `nix/`. Report what could only be verified in CI.
+- [x] T8: Acceptance. Confirm `setup-beam` and `1.15.4` appear nowhere; the devShell, CI and hooks all get Gleam from the same flake (`nix develop -c gleam --version` = 1.18.1); `nix flake check` passes; statix and deadnix are clean on `flake.nix` and `nix/`. Report what could only be verified in CI.
   - Depends on: T6 (and T7 if it ran)
 
 ## Verification
