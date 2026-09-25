@@ -63,6 +63,19 @@
             };
           };
 
+          checks = lib.optionalAttrs isLinux {
+            launcher = pkgs.runCommand "repost-launcher-check" { } ''
+              if output=$(env -i ${lib.getExe self'.packages.default} 2>&1); then
+                echo "$output"
+                echo "expected the launcher to exit non-zero without configuration" >&2
+                exit 1
+              fi
+              echo "$output"
+              grep -q SHIM_ACCESS_KEY_ID <<<"$output"
+              touch "$out"
+            '';
+          };
+
           treefmt = {
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
